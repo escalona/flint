@@ -1,6 +1,6 @@
 {
   "name": "@flint-dev/cli",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Flint command-line entrypoint",
   "license": "MIT",
   "author": "Aaron Escalona",

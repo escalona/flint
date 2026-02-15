@@ -62,10 +62,23 @@ function resolveCommandBinary(packageName, binName) {
   return resolve(dirname(packageJsonPath), relativeBinPath);
 }
 
-function runCommand(binaryPath, args) {
+function buildCommandEnv(commandName) {
+  const env = { ...process.env };
+
+  if (commandName === "tui" && !env.FLINT_APP_SERVER_COMMAND) {
+    env.FLINT_APP_SERVER_COMMAND = resolveCommandBinary(
+      "@flint-dev/claude-app-server",
+      "claude-app-server",
+    );
+  }
+
+  return env;
+}
+
+function runCommand(binaryPath, args, env) {
   const child = spawn(binaryPath, args, {
     stdio: "inherit",
-    env: process.env,
+    env,
   });
 
   child.on("error", (error) => {
@@ -98,7 +111,8 @@ function main() {
   }
 
   const binaryPath = resolveCommandBinary(command.packageName, command.binName);
-  runCommand(binaryPath, rest);
+  const env = buildCommandEnv(commandName);
+  runCommand(binaryPath, rest, env);
 }
 
 main();
