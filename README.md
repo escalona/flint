@@ -1,106 +1,154 @@
 # Flint
 
-Flint is a self-hosted gateway for coding agents, powered by the harnesses you already use: Claude, Pi, and Codex.
+Self-hosted infrastructure for embedding AI coding agents into your apps.
 
-## What You Can Do
+## What Flint Does
 
-| Goal                                                  | Start here                                            | Result                                                    |
-| ----------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
-| Chat with an agent in your terminal                   | `apps/tui` + `packages/claude-app-server`             | Interactive threads for day-to-day tasks                  |
-| Add agent workflows to apps                           | `apps/gateway`                                        | HTTP endpoints for thread create/resume + turns           |
-| Build custom product integrations                     | `packages/sdk`                                        | Programmatic app-server and gateway clients               |
-| Pick your coding harness (`Claude`, `Pi`, or `Codex`) | `packages/sdk` providers + app servers in `packages/` | Same Flint thread model across different harness runtimes |
+Flint gives you an HTTP gateway and TypeScript SDK to add AI coding agents to your own products. It handles thread management, tool execution, streaming, and provider abstraction — so you can embed a coding agent over a single HTTP call or a few lines of TypeScript.
 
-## Getting Started (Published Packages)
+## Use Cases
 
-Prerequisite: [Bun](https://bun.sh) installed.
+- **Slack bot** — Point Slack webhooks at the gateway, get a coding agent in your workspace
+- **Internal tools** — Add agent-powered endpoints to dashboards or admin panels
+- **CI/CD** — Trigger code review or generation from your pipeline via HTTP
+- **Custom UIs** — Build your own chat interface using the SDK's event stream
 
-1. Check the CLI:
+## Quick Start
 
-```bash
-npx @flint-dev/cli --help
-```
-
-2. Chat with Flint in your terminal:
+### Try it now
 
 ```bash
-ANTHROPIC_API_KEY=... npx @flint-dev/cli tui
+ANTHROPIC_API_KEY=sk-ant-... npx @flint-dev/cli tui
 ```
 
-3. Run the HTTP gateway (in a second terminal):
-
-```bash
-npx @flint-dev/cli gateway
-```
-
-4. Verify the gateway is up:
-
-```bash
-curl http://127.0.0.1:8788/v1/health
-```
-
-5. Optional: run app servers directly:
-
-```bash
-npx @flint-dev/cli app-server
-npx @flint-dev/cli pi-app-server
-```
-
-Note: when gateway MCP profile server config references a missing env var (for example
-`${LINEAR_API_KEY}`), Flint logs a warning and skips that MCP server instead of failing startup.
-
-## Quick Start (From Source)
+### From source
 
 ```bash
 bun install
-ANTHROPIC_API_KEY=... bun run flint tui
+ANTHROPIC_API_KEY=sk-ant-... bun run flint tui
 ```
 
-Other common entrypoints:
+This opens a terminal chat where you can interact with a Claude-powered coding agent.
 
-```bash
-bun run flint app-server
-bun run flint pi-app-server
-bun run flint gateway
-bun run flint cloudflare-sandbox:dev
+## Architecture
+
+```
+Your App ──HTTP──→ Gateway ──stdio──→ App Server ──→ Claude / Pi / Codex
+                      │                    │
+                   Threads              Agent SDK
+                   Routing              Tool Exec
+                   Webhooks             Streaming
+
+Terminal ──SDK──→ App Server ──→ Claude / Pi / Codex
+  (TUI)
 ```
 
-Optional: link `flint` as a local command while developing:
+| Component      | What it does                                                                 |
+| -------------- | ---------------------------------------------------------------------------- |
+| **Gateway**    | HTTP server that manages agent threads, routes messages, handles webhooks    |
+| **App Server** | JSON-RPC process that wraps the Claude Agent SDK, executes tools, streams events |
+| **SDK**        | TypeScript client library — `AppServerClient` for local, `GatewayClient` for HTTP |
+| **TUI**        | Terminal interface for testing and demos                                     |
 
-```bash
-bun link
-flint --help
+## Gateway API
+
+The gateway exposes a REST API for managing agent threads:
+
+```
+POST   /v1/threads                  Create thread + send first message
+POST   /v1/threads/:id              Send message to existing thread
+GET    /v1/threads                  List threads
+GET    /v1/threads/:id              Get thread details
+POST   /v1/threads/:id/interrupt    Interrupt a running turn
+GET    /v1/health                   Health check
+POST   /webhooks/:channel           Inbound webhooks (Slack, etc.)
+```
+
+## SDK Usage
+
+### Local (stdio)
+
+Spawn an app server as a child process and communicate over JSON-RPC:
+
+```typescript
+import { AppServerClient } from "@flint/sdk";
+
+const client = new AppServerClient({
+  command: "claude-app-server",
+  cwd: "/path/to/project",
+});
+
+await client.start();
+const threadId = await client.createThread({ model: "claude-sonnet-4-5-20250929" });
+
+for await (const event of client.prompt("Refactor the auth module")) {
+  // event.type: "text" | "reasoning" | "tool_start" | "tool_end" | "done" | "error"
+}
+```
+
+### Remote (HTTP)
+
+Talk to a running gateway over HTTP:
+
+```typescript
+import { GatewayClient } from "@flint/sdk";
+
+const client = new GatewayClient({ baseUrl: "http://localhost:8788" });
+
+const reply = await client.createThread({ message: "Fix the failing tests" });
+const threads = await client.listThreads();
 ```
 
 ## Repository Layout
 
-```text
-apps/
-  tui/                  Terminal UI client
-  gateway/              HTTP gateway app
-  cloudflare-sandbox/   Cloudflare Worker sandbox app
-packages/
-  flint/                Publishable CLI entrypoint (`flint`)
-  claude-app-server/    Claude app server (JSON-RPC over stdio)
-  pi-app-server/        Provider-integrated app server
-  sdk/                  TypeScript client SDK
 ```
+apps/
+  tui/                    Terminal UI client
+  gateway/                HTTP gateway server
+  cloudflare-sandbox/     Cloudflare Workers deployment
+  inspector/              Inspector tool
+packages/
+  sdk/                    TypeScript client SDK
+  claude-app-server/      Claude app server (JSON-RPC over stdio)
+  pi-app-server/          Pi app server variant
+  app-server-core/        Shared app server utilities
+  channels/               Channel adapters (Slack)
+  flint/                  Publishable CLI entrypoint
+```
+
+## Commands
+
+```bash
+bun run flint tui              # Terminal UI (demo/playground)
+bun run flint gateway          # HTTP gateway server
+bun run flint app-server       # Claude app server standalone
+bun run flint pi-app-server    # Pi app server standalone
+```
+
+## Environment Variables
+
+| Variable                     | Description                                          |
+| ---------------------------- | ---------------------------------------------------- |
+| `ANTHROPIC_API_KEY`          | Required for Claude-backed runs                      |
+| `PORT`                       | Gateway port (default: `8788`)                       |
+| `FLINT_PROJECT`              | Working directory override for the TUI               |
+| `FLINT_APP_SERVER_COMMAND`   | Override TUI app server command (default: `claude-app-server`) |
+| `FLINT_APP_SERVER_ARGS`      | Space-delimited args forwarded by TUI                |
+| `FLINT_GATEWAY_PROVIDER`     | Provider name (default: `claude`)                    |
+| `FLINT_GATEWAY_MODEL`        | Model override                                       |
+| `FLINT_GATEWAY_CWD`          | Gateway working directory                            |
+| `FLINT_GATEWAY_ROUTING_MODE` | Thread routing: `main`, `per-peer`, `per-channel-peer`, `per-account-channel-peer` |
+| `SLACK_BOT_TOKEN`            | Slack bot token for channel adapter                  |
+| `SLACK_SIGNING_SECRET`       | Slack webhook verification secret                    |
 
 ## Development
 
 ```bash
 bun install
-bun run typecheck
-bun run lint
-bun test
+bun run typecheck    # Type-check all packages
+bun run lint         # Lint (oxlint)
+bun test             # Run tests
 ```
-
-## Environment
-
-- `ANTHROPIC_API_KEY` for Claude-backed runs.
-- `FLINT_PROJECT` optional working directory override for the TUI.
-- `FLINT_APP_SERVER_COMMAND` override TUI app server command (default `claude-app-server`).
-- `FLINT_APP_SERVER_ARGS` optional space-delimited args forwarded by TUI.
 
 ## Status
 
