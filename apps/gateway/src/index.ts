@@ -1311,7 +1311,41 @@ export async function startGatewayServer(
   };
 }
 
+function printHelp(): void {
+  console.log("flint gateway");
+  console.log("");
+  console.log("Start the Flint HTTP gateway server.");
+  console.log("");
+  console.log("Usage:");
+  console.log("  flint gateway [options]");
+  console.log("");
+  console.log("Options:");
+  console.log("  --help, -h    Show this help message");
+  console.log("");
+  console.log("Environment variables:");
+  console.log("  ANTHROPIC_API_KEY                  Required for Claude-backed runs");
+  console.log("  PORT                               Listen port (default: 8788)");
+  console.log("  FLINT_GATEWAY_CWD                  Working directory (default: cwd)");
+  console.log("  FLINT_GATEWAY_PROVIDER             Provider name (default: claude)");
+  console.log("  FLINT_GATEWAY_MODEL                Model override");
+  console.log("  FLINT_GATEWAY_ROUTING_MODE         Thread routing: main, per-peer, per-channel-peer,");
+  console.log("                                     per-account-channel-peer (default: per-peer)");
+  console.log("  FLINT_GATEWAY_STORE_PATH           Thread store path (default: ~/.flint/gateway/threads.json)");
+  console.log("  FLINT_GATEWAY_IDEMPOTENCY_TTL_MS   Idempotency cache TTL in ms (default: 300000)");
+  console.log("  FLINT_GATEWAY_USER_SETTINGS_PATH   Settings file path (default: ~/.flint/settings.json)");
+  console.log("  FLINT_GATEWAY_IDENTITY_LINKS       JSON map for cross-channel identity linking");
+  console.log("  SLACK_BOT_TOKEN                    Slack bot token (enables Slack adapter)");
+  console.log("  SLACK_SIGNING_SECRET               Slack webhook verification secret");
+  console.log("  SLACK_BOT_USER_ID                  Slack bot user ID");
+}
+
 if (import.meta.main) {
+  const args = process.argv.slice(2);
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    process.exit(0);
+  }
+
   const started = await startGatewayServer();
   started.attachSignalHandlers();
 }

@@ -15,20 +15,35 @@ Flint gives you an HTTP gateway and TypeScript SDK to add AI coding agents to yo
 
 ## Quick Start
 
-### Try it now
+### Install
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... npx @flint-dev/cli tui
+npm install -g @flint-dev/cli
 ```
+
+### Try the TUI
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... flint tui
+```
+
+This opens a terminal chat where you can interact with a Claude-powered coding agent.
+
+### Start the gateway
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... flint gateway
+```
+
+The gateway starts an HTTP server on port `8788` (override with `PORT`). You can then create threads and send messages via the REST API.
 
 ### From source
 
 ```bash
 bun install
 ANTHROPIC_API_KEY=sk-ant-... bun run flint tui
+ANTHROPIC_API_KEY=sk-ant-... bun run flint gateway
 ```
-
-This opens a terminal chat where you can interact with a Claude-powered coding agent.
 
 ## Architecture
 
