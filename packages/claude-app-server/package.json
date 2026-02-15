@@ -1,0 +1,30 @@
+{
+  "name": "@flint-dev/claude-app-server",
+  "version": "0.2.2",
+  "description": "Claude-backed app server using JSON-RPC 2.0 over stdio",
+  "license": "MIT",
+  "author": "Aaron Escalona",
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "bin": {
+    "claude-app-server": "./bin/claude-app-server.js"
+  },
+  "type": "module",
+  "main": "src/index.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build src/index.ts --compile --outfile dist/claude-app-server",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.38",
+    "@flint-dev/app-server-core": "^0.2.1"
+  }
+}

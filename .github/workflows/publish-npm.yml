@@ -1,0 +1,43 @@
+name: Publish NPM Packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Configure npm auth
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Install
+        run: bun install
+
+      - name: Validate
+        run: |
+          bun run typecheck
+          bun run lint
+          bun test
+
+      - name: Publish packages
+        run: ./scripts/publish-npm.sh
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

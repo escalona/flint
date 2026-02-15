@@ -1,0 +1,30 @@
+{
+  "name": "@flint-dev/tui",
+  "version": "0.2.1",
+  "description": "Terminal UI for chatting with Flint app servers",
+  "license": "MIT",
+  "author": "Aaron Escalona",
+  "files": [
+    "src",
+    "bin",
+    "README.md"
+  ],
+  "bin": {
+    "flint-tui": "bin/flint-tui.js"
+  },
+  "type": "module",
+  "main": "src/index.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@flint-dev/claude-app-server": "^0.2.2",
+    "@flint-dev/sdk": "^0.2.1",
+    "@mariozechner/pi-tui": "^0.50.1",
+    "chalk": "^5.5.0"
+  }
+}

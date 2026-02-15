@@ -1,0 +1,15 @@
+{
+  "name": "@flint-dev/channels",
+  "version": "0.2.0",
+  "description": "Channel adapters for the Flint gateway",
+  "license": "MIT",
+  "author": "Aaron Escalona",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "main": "src/index.ts",
+  "publishConfig": {
+    "access": "public"
+  }
+}

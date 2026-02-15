@@ -1,0 +1,38 @@
+{
+  "name": "flint",
+  "private": true,
+  "description": "Agent platform built with Bun and TypeScript",
+  "license": "MIT",
+  "author": "Aaron Escalona",
+  "bin": {
+    "flint": "./bin/flint.js"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --build",
+    "lint": "oxlint .",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "release:publish": "bash ./scripts/publish-npm.sh",
+    "flint": "bun run ./bin/flint.js",
+    "tui": "bun run apps/tui/src/index.ts",
+    "gateway": "bun run --env-file apps/gateway/.env apps/gateway/src/index.ts",
+    "cloudflare-sandbox:dev": "bun run --cwd apps/cloudflare-sandbox dev",
+    "cloudflare-sandbox:deploy": "bun run --cwd apps/cloudflare-sandbox deploy",
+    "app-server": "bun run packages/claude-app-server/src/index.ts",
+    "pi-app-server": "bun run packages/pi-app-server/src/index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "oxfmt": "^0.21.0",
+    "oxlint": "^1.36.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

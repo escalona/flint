@@ -1,0 +1,31 @@
+{
+  "name": "@flint-dev/gateway",
+  "version": "0.2.3",
+  "description": "HTTP gateway for routing coding-agent threads",
+  "license": "MIT",
+  "author": "Aaron Escalona",
+  "files": [
+    "src",
+    "bin",
+    "README.md"
+  ],
+  "bin": {
+    "flint-gateway": "bin/flint-gateway.js"
+  },
+  "type": "module",
+  "main": "src/index.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@flint-dev/channels": "^0.2.0",
+    "@flint-dev/claude-app-server": "^0.2.0",
+    "@flint-dev/pi-app-server": "^0.2.0",
+    "@flint-dev/sdk": "^0.2.0",
+    "hono": "^4.11.9"
+  }
+}

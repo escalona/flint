@@ -1,0 +1,42 @@
+{
+  "name": "@flint-dev/sdk",
+  "version": "0.2.1",
+  "description": "TypeScript client SDK for Flint app servers",
+  "license": "MIT",
+  "author": "Aaron Escalona",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepack": "bun run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@flint-dev/claude-app-server": "^0.2.0",
+    "@flint-dev/pi-app-server": "^0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@flint-dev/claude-app-server": {
+      "optional": true
+    },
+    "@flint-dev/pi-app-server": {
+      "optional": true
+    }
+  }
+}

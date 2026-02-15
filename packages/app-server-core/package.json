@@ -1,0 +1,25 @@
+{
+  "name": "@flint-dev/app-server-core",
+  "version": "0.2.1",
+  "description": "Shared protocol and transport primitives for Flint app servers",
+  "license": "MIT",
+  "author": "Aaron Escalona",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol/types": "./src/protocol/types.ts",
+    "./protocol/notifications": "./src/protocol/notifications.ts",
+    "./protocol/requests": "./src/protocol/requests.ts",
+    "./stdio": "./src/stdio.ts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {}
+}

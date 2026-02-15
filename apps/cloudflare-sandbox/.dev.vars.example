@@ -1,0 +1,9 @@
+# Optional edge auth token for worker routes.
+FLINT_EDGE_TOKEN=replace-me
+
+# Keep sandbox warm by default. Set to values like 10m to reduce cost.
+FLINT_SANDBOX_SLEEP_AFTER=never
+
+# Flint gateway/app-server env passthrough.
+FLINT_GATEWAY_PROVIDER=claude
+ANTHROPIC_API_KEY=replace-me

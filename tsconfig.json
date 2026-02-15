@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/sdk" },
+    { "path": "./packages/app-server-core" },
+    { "path": "./packages/claude-app-server" },
+    { "path": "./packages/pi-app-server" },
+    { "path": "./packages/channels" },
+    { "path": "./apps/gateway" },
+    { "path": "./apps/cloudflare-sandbox" },
+    { "path": "./apps/tui" }
+  ]
+}

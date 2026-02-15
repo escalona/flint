@@ -1,0 +1,24 @@
+{
+  "name": "@flint-dev/cli",
+  "version": "0.2.3",
+  "description": "Flint command-line entrypoint",
+  "license": "MIT",
+  "author": "Aaron Escalona",
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "bin": {
+    "flint": "bin/flint.js"
+  },
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@flint-dev/claude-app-server": "^0.2.2",
+    "@flint-dev/gateway": "^0.2.3",
+    "@flint-dev/pi-app-server": "^0.2.2",
+    "@flint-dev/tui": "^0.2.1"
+  }
+}

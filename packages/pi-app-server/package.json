@@ -1,0 +1,29 @@
+{
+  "name": "@flint-dev/pi-app-server",
+  "version": "0.2.2",
+  "description": "Provider-integrated app server variant",
+  "license": "MIT",
+  "author": "Aaron Escalona",
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "bin": {
+    "pi-app-server": "./bin/pi-app-server.js"
+  },
+  "type": "module",
+  "main": "src/index.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build src/index.ts --compile --outfile dist/pi-app-server",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@flint-dev/app-server-core": "^0.2.1"
+  }
+}
