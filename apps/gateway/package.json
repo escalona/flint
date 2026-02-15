@@ -4,14 +4,14 @@
   "description": "HTTP gateway for routing coding-agent threads",
   "license": "MIT",
   "author": "Aaron Escalona",
-  "files": [
-    "src",
-    "bin",
-    "README.md"
-  ],
   "bin": {
     "flint-gateway": "bin/flint-gateway.js"
   },
+  "files": [
+    "bin",
+    "README.md",
+    "src"
+  ],
   "type": "module",
   "main": "src/index.ts",
   "publishConfig": {

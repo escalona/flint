@@ -803,9 +803,7 @@ function resolveEnvVarsInConfig(
   return value;
 }
 
-async function readGatewaySettingsFile(
-  path: string,
-): Promise<GatewaySettings | undefined> {
+async function readGatewaySettingsFile(path: string): Promise<GatewaySettings | undefined> {
   const file = Bun.file(path);
   if (!(await file.exists())) {
     return undefined;
@@ -824,10 +822,7 @@ async function readGatewaySettings(
 }
 
 function isMissingEnvVarError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    error.message.startsWith("[gateway] missing or empty env var")
-  );
+  return error instanceof Error && error.message.startsWith("[gateway] missing or empty env var");
 }
 
 function parseMcpProfilesFromSettings(

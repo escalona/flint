@@ -4,11 +4,11 @@ Flint is a self-hosted gateway for coding agents, powered by the harnesses you a
 
 ## What You Can Do
 
-| Goal | Start here | Result |
-| --- | --- | --- |
-| Chat with an agent in your terminal | `apps/tui` + `packages/claude-app-server` | Interactive threads for day-to-day tasks |
-| Add agent workflows to apps | `apps/gateway` | HTTP endpoints for thread create/resume + turns |
-| Build custom product integrations | `packages/sdk` | Programmatic app-server and gateway clients |
+| Goal                                                  | Start here                                            | Result                                                    |
+| ----------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
+| Chat with an agent in your terminal                   | `apps/tui` + `packages/claude-app-server`             | Interactive threads for day-to-day tasks                  |
+| Add agent workflows to apps                           | `apps/gateway`                                        | HTTP endpoints for thread create/resume + turns           |
+| Build custom product integrations                     | `packages/sdk`                                        | Programmatic app-server and gateway clients               |
 | Pick your coding harness (`Claude`, `Pi`, or `Codex`) | `packages/sdk` providers + app servers in `packages/` | Same Flint thread model across different harness runtimes |
 
 ## Getting Started (Published Packages)

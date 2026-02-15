@@ -4,14 +4,14 @@
   "description": "Provider-integrated app server variant",
   "license": "MIT",
   "author": "Aaron Escalona",
-  "files": [
-    "bin",
-    "src",
-    "README.md"
-  ],
   "bin": {
     "pi-app-server": "./bin/pi-app-server.js"
   },
+  "files": [
+    "bin",
+    "README.md",
+    "src"
+  ],
   "type": "module",
   "main": "src/index.ts",
   "publishConfig": {

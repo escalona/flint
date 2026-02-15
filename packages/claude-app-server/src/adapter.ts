@@ -11,10 +11,7 @@ import type {
   AgentMessageItem,
   ReasoningItem,
 } from "@flint-dev/app-server-core";
-import {
-  createNotification,
-  type JsonRpcNotification,
-} from "@flint-dev/app-server-core";
+import { createNotification, type JsonRpcNotification } from "@flint-dev/app-server-core";
 
 export interface AdapterContext {
   threadId: string;

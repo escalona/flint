@@ -88,9 +88,7 @@ describe("GatewayClient", () => {
     await client.sendThreadMessage("agent:main:direct:u1", "continue");
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe(
-      "http://127.0.0.1:8788/v1/threads/agent%3Amain%3Adirect%3Au1",
-    );
+    expect(calls[0]?.url).toBe("http://127.0.0.1:8788/v1/threads/agent%3Amain%3Adirect%3Au1");
     expect(readJsonBody(calls[0]!)).toEqual({ text: "continue" });
   });
 

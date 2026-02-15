@@ -4,14 +4,14 @@
   "description": "Claude-backed app server using JSON-RPC 2.0 over stdio",
   "license": "MIT",
   "author": "Aaron Escalona",
-  "files": [
-    "bin",
-    "src",
-    "README.md"
-  ],
   "bin": {
     "claude-app-server": "./bin/claude-app-server.js"
   },
+  "files": [
+    "bin",
+    "README.md",
+    "src"
+  ],
   "type": "module",
   "main": "src/index.ts",
   "publishConfig": {

@@ -4,14 +4,14 @@
   "description": "Terminal UI for chatting with Flint app servers",
   "license": "MIT",
   "author": "Aaron Escalona",
-  "files": [
-    "src",
-    "bin",
-    "README.md"
-  ],
   "bin": {
     "flint-tui": "bin/flint-tui.js"
   },
+  "files": [
+    "bin",
+    "README.md",
+    "src"
+  ],
   "type": "module",
   "main": "src/index.ts",
   "publishConfig": {

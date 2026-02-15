@@ -133,7 +133,10 @@ export class GatewayClient {
   }
 
   async interruptThread(threadId: string): Promise<boolean> {
-    const response = await this.request("POST", `/v1/threads/${encodeURIComponent(threadId)}/interrupt`);
+    const response = await this.request(
+      "POST",
+      `/v1/threads/${encodeURIComponent(threadId)}/interrupt`,
+    );
     if (response.status === 409) {
       return false;
     }

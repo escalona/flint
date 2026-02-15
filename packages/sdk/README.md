@@ -72,8 +72,8 @@ A provider resolves to the command and arguments needed to spawn an app server. 
 
 | Name       | App server                         | Default model             |
 | ---------- | ---------------------------------- | ------------------------- |
-| `"claude"` | `@flint-dev/claude-app-server`         | `claude-opus-4-6`         |
-| `"pi"`     | `@flint-dev/pi-app-server`             | `google/gemini-2.5-flash` |
+| `"claude"` | `@flint-dev/claude-app-server`     | `claude-opus-4-6`         |
+| `"pi"`     | `@flint-dev/pi-app-server`         | `google/gemini-2.5-flash` |
 | `"codex"`  | `codex app-server` (system binary) | —                         |
 
 ```ts

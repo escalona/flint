@@ -22,10 +22,7 @@ export function createWebhookHandler(
     }
   }
 
-  async function processWebhookEvent(
-    meta: WebhookMeta,
-    message: InboundMessage,
-  ): Promise<void> {
+  async function processWebhookEvent(meta: WebhookMeta, message: InboundMessage): Promise<void> {
     try {
       await adapter.acknowledge(meta);
     } catch (error) {

@@ -180,9 +180,10 @@ describe("MCP settings", () => {
 
       expect(runtime.mcpProfileCount).toBe(1);
       expect(
-        warnings.some((line) =>
-          line.includes('missing or empty env var "LINEAR_API_KEY"') &&
-          line.includes('skipping MCP server "linear" in profile "linear"'),
+        warnings.some(
+          (line) =>
+            line.includes('missing or empty env var "LINEAR_API_KEY"') &&
+            line.includes('skipping MCP server "linear" in profile "linear"'),
         ),
       ).toBe(true);
 

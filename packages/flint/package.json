@@ -4,13 +4,13 @@
   "description": "Flint command-line entrypoint",
   "license": "MIT",
   "author": "Aaron Escalona",
+  "bin": {
+    "flint": "bin/flint.js"
+  },
   "files": [
     "bin",
     "README.md"
   ],
-  "bin": {
-    "flint": "bin/flint.js"
-  },
   "type": "module",
   "publishConfig": {
     "access": "public"

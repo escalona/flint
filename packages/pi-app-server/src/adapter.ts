@@ -6,10 +6,7 @@ import type {
   AgentMessageItem,
   ReasoningItem,
 } from "@flint-dev/app-server-core";
-import {
-  createNotification,
-  type JsonRpcNotification,
-} from "@flint-dev/app-server-core";
+import { createNotification, type JsonRpcNotification } from "@flint-dev/app-server-core";
 import type { PiRpcEvent } from "./pi-rpc-client.ts";
 
 export interface AdapterContext {
