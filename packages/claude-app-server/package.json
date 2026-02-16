@@ -1,6 +1,6 @@
 {
   "name": "@flint-dev/claude-app-server",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Claude-backed app server using JSON-RPC 2.0 over stdio",
   "license": "MIT",
   "author": "Aaron Escalona",

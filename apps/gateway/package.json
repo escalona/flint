@@ -1,6 +1,6 @@
 {
   "name": "@flint-dev/gateway",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "HTTP gateway for routing coding-agent threads",
   "license": "MIT",
   "author": "Aaron Escalona",

@@ -1,6 +1,6 @@
 {
   "name": "@flint-dev/tui",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Terminal UI for chatting with Flint app servers",
   "license": "MIT",
   "author": "Aaron Escalona",
