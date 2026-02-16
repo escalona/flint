@@ -20,7 +20,7 @@
     "format:check": "oxfmt --check",
     "release:publish": "bash ./scripts/publish-npm.sh",
     "flint": "bun run ./bin/flint.js",
-    "tui": "bun run apps/tui/src/index.ts",
+    "tui": "bun run ./bin/flint.js tui",
     "gateway": "bun run --env-file apps/gateway/.env apps/gateway/src/index.ts",
     "cloudflare-sandbox:dev": "bun run --cwd apps/cloudflare-sandbox dev",
     "cloudflare-sandbox:deploy": "bun run --cwd apps/cloudflare-sandbox deploy",

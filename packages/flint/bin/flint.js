@@ -30,8 +30,18 @@ const COMMANDS = {
   },
 };
 
+function getCliVersion() {
+  const packageJsonPath = new URL("../package.json", import.meta.url);
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  return packageJson.version;
+}
+
 function printHelp() {
   console.log("flint <command> [args]");
+  console.log("");
+  console.log("Options:");
+  console.log("  --version, -v     Print CLI version");
+  console.log("  --help, -h        Show help");
   console.log("");
   console.log("Commands:");
   for (const [name, command] of Object.entries(COMMANDS)) {
@@ -96,6 +106,11 @@ function runCommand(binaryPath, args, env) {
 
 function main() {
   const [, , commandName, ...rest] = process.argv;
+
+  if (commandName === "--version" || commandName === "-v") {
+    console.log(getCliVersion());
+    process.exit(0);
+  }
 
   if (!commandName || commandName === "help" || commandName === "--help" || commandName === "-h") {
     printHelp();

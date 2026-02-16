@@ -1,12 +1,17 @@
 #!/usr/bin/env bun
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
+const CLI_PACKAGE_JSON_PATH = resolve(REPO_ROOT, "packages/flint/package.json");
+const CLAUDE_APP_SERVER_BIN = resolve(
+  REPO_ROOT,
+  "packages/claude-app-server/bin/claude-app-server.js",
+);
 
 const COMMANDS = {
   tui: {
@@ -41,6 +46,10 @@ const COMMANDS = {
 function printHelp() {
   console.log("flint <command> [args]");
   console.log("");
+  console.log("Options:");
+  console.log("  --version, -v     Print CLI version");
+  console.log("  --help, -h        Show help");
+  console.log("");
   console.log("Commands:");
   for (const [name, command] of Object.entries(COMMANDS)) {
     console.log(`  ${name.padEnd(24)} ${command.description}`);
@@ -53,12 +62,22 @@ function printHelp() {
   console.log("  flint pi-app-server");
 }
 
-function runBun(args) {
+function buildCommandEnv(commandName) {
+  const env = { ...process.env };
+
+  if (commandName === "tui" && !env.FLINT_APP_SERVER_COMMAND) {
+    env.FLINT_APP_SERVER_COMMAND = CLAUDE_APP_SERVER_BIN;
+  }
+
+  return env;
+}
+
+function runBun(args, env) {
   return new Promise((resolveExitCode, reject) => {
     const child = spawn("bun", args, {
       cwd: REPO_ROOT,
       stdio: "inherit",
-      env: process.env,
+      env,
     });
 
     child.on("error", reject);
@@ -66,8 +85,18 @@ function runBun(args) {
   });
 }
 
+function getCliVersion() {
+  const packageJson = JSON.parse(readFileSync(CLI_PACKAGE_JSON_PATH, "utf8"));
+  return packageJson.version;
+}
+
 async function main() {
   const [, , commandName, ...rest] = process.argv;
+
+  if (commandName === "--version" || commandName === "-v") {
+    console.log(getCliVersion());
+    process.exit(0);
+  }
 
   if (!commandName || commandName === "help" || commandName === "--help" || commandName === "-h") {
     printHelp();
@@ -83,7 +112,8 @@ async function main() {
   }
 
   if (command.isScript) {
-    const exitCode = await runBun(["run", ...command.args, ...rest]);
+    const env = buildCommandEnv(commandName);
+    const exitCode = await runBun(["run", ...command.args, ...rest], env);
     process.exit(exitCode);
   }
 
@@ -93,7 +123,8 @@ async function main() {
   }
   args.push(...command.args, ...rest);
 
-  const exitCode = await runBun(args);
+  const env = buildCommandEnv(commandName);
+  const exitCode = await runBun(args, env);
   process.exit(exitCode);
 }
 
