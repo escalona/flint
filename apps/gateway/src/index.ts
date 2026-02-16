@@ -1,9 +1,10 @@
 import { SlackAdapter, createWebhookHandler } from "@flint-dev/channels";
-import { createClient, type AppServerClient } from "@flint-dev/sdk";
+import { createClient, type AgentEvent, type AppServerClient } from "@flint-dev/sdk";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 
 export type RoutingMode = "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
 export type ChatType = "direct" | "group" | "channel";
@@ -284,19 +285,26 @@ export class FlintGateway {
     this.runtimes.clear();
   }
 
-  async handleMessage(message: InboundMessage): Promise<GatewayReply> {
+  async handleMessage(
+    message: InboundMessage,
+    onEvent?: (event: AgentEvent) => Promise<void>,
+  ): Promise<GatewayReply> {
     const routingMode = message.routingMode ?? this.options.defaultRoutingMode;
     const threadId = resolveThreadId(message, routingMode, this.options.identityLinks);
-    return this.processMessage(threadId, routingMode, message);
+    return this.processMessage(threadId, routingMode, message, onEvent);
   }
 
-  async handleThreadMessage(threadId: string, text: string): Promise<GatewayReply> {
+  async handleThreadMessage(
+    threadId: string,
+    text: string,
+    onEvent?: (event: AgentEvent) => Promise<void>,
+  ): Promise<GatewayReply> {
     const record = this.store.get(threadId);
     if (!record) {
       throw new Error("Thread not found.");
     }
     const message = messageFromThreadRecord(record, text);
-    return this.processMessage(threadId, record.routingMode, message);
+    return this.processMessage(threadId, record.routingMode, message, onEvent);
   }
 
   async interruptThread(threadId: string): Promise<boolean> {
@@ -310,10 +318,11 @@ export class FlintGateway {
     threadId: string,
     routingMode: RoutingMode,
     message: InboundMessage,
+    onEvent?: (event: AgentEvent) => Promise<void>,
   ): Promise<GatewayReply> {
     return this.queue.enqueue(threadId, async () => {
       const runtime = await this.ensureThreadRuntime(message, routingMode, threadId);
-      const reply = await this.runTurn(runtime.client, message.text);
+      const reply = await this.runTurn(runtime.client, message.text, onEvent);
       const now = new Date().toISOString();
       const existing = this.store.get(threadId);
       const chatType = normalizeChatType(message.chatType);
@@ -439,12 +448,17 @@ export class FlintGateway {
     return runtime;
   }
 
-  private async runTurn(client: AppServerClient, inputText: string): Promise<string> {
+  private async runTurn(
+    client: AppServerClient,
+    inputText: string,
+    onEvent?: (event: AgentEvent) => Promise<void>,
+  ): Promise<string> {
     const promptOptions = this.options.model ? { model: this.options.model } : undefined;
     let responseText = "";
     let terminalError: string | null = null;
 
     for await (const event of client.prompt(inputText, promptOptions)) {
+      if (onEvent) await onEvent(event);
       switch (event.type) {
         case "text":
           responseText += event.delta;
@@ -973,8 +987,15 @@ export function readRoutingModeFromEnv(env: Record<string, string | undefined>):
 export interface GatewayLike {
   listThreads(): ThreadRecord[];
   getThread(threadId: string): ThreadRecord | undefined;
-  handleMessage(message: InboundMessage): Promise<GatewayReply>;
-  handleThreadMessage(threadId: string, text: string): Promise<GatewayReply>;
+  handleMessage(
+    message: InboundMessage,
+    onEvent?: (event: AgentEvent) => Promise<void>,
+  ): Promise<GatewayReply>;
+  handleThreadMessage(
+    threadId: string,
+    text: string,
+    onEvent?: (event: AgentEvent) => Promise<void>,
+  ): Promise<GatewayReply>;
   interruptThread(threadId: string): Promise<boolean>;
 }
 
@@ -991,6 +1012,29 @@ type PublicThreadRecord = Omit<ThreadRecord, "providerThreadId">;
 function toPublicThreadRecord(record: ThreadRecord): PublicThreadRecord {
   const { providerThreadId: _providerThreadId, ...publicRecord } = record;
   return publicRecord;
+}
+
+function streamGatewaySSE(
+  c: Context,
+  run: (onEvent: (event: AgentEvent) => Promise<void>) => Promise<GatewayReply>,
+) {
+  return streamSSE(c, async (stream) => {
+    const started = Date.now();
+    try {
+      const result = await run(async (event) => {
+        await stream.writeSSE({ event: event.type, data: JSON.stringify(event) });
+      });
+      await stream.writeSSE({
+        event: "result",
+        data: JSON.stringify({ ...result, durationMs: Date.now() - started }),
+      });
+    } catch (error) {
+      await stream.writeSSE({
+        event: "error",
+        data: JSON.stringify({ type: "error", message: formatError(error) }),
+      });
+    }
+  });
 }
 
 export function createGatewayApp(options: GatewayAppOptions): Hono {
@@ -1059,6 +1103,13 @@ export function createGatewayApp(options: GatewayAppOptions): Hono {
     if (!text.trim()) {
       return json(400, { error: "text is required." });
     }
+
+    if (context.req.header("accept")?.includes("text/event-stream")) {
+      return streamGatewaySSE(context, (onEvent) =>
+        options.gateway.handleThreadMessage(threadId, text, onEvent),
+      );
+    }
+
     const idempotencyKey =
       context.req.header("idempotency-key")?.trim() ||
       (typeof body.idempotencyKey === "string" && body.idempotencyKey.trim()
@@ -1126,6 +1177,12 @@ export function createGatewayApp(options: GatewayAppOptions): Hono {
     const parsed = parseInboundMessage(payload);
     if (!parsed.ok) {
       return json(400, { error: parsed.error });
+    }
+
+    if (context.req.header("accept")?.includes("text/event-stream")) {
+      return streamGatewaySSE(context, (onEvent) =>
+        options.gateway.handleMessage(parsed.message, onEvent),
+      );
     }
 
     const idempotencyKey =
@@ -1328,11 +1385,17 @@ function printHelp(): void {
   console.log("  FLINT_GATEWAY_CWD                  Working directory (default: cwd)");
   console.log("  FLINT_GATEWAY_PROVIDER             Provider name (default: claude)");
   console.log("  FLINT_GATEWAY_MODEL                Model override");
-  console.log("  FLINT_GATEWAY_ROUTING_MODE         Thread routing: main, per-peer, per-channel-peer,");
+  console.log(
+    "  FLINT_GATEWAY_ROUTING_MODE         Thread routing: main, per-peer, per-channel-peer,",
+  );
   console.log("                                     per-account-channel-peer (default: per-peer)");
-  console.log("  FLINT_GATEWAY_STORE_PATH           Thread store path (default: ~/.flint/gateway/threads.json)");
+  console.log(
+    "  FLINT_GATEWAY_STORE_PATH           Thread store path (default: ~/.flint/gateway/threads.json)",
+  );
   console.log("  FLINT_GATEWAY_IDEMPOTENCY_TTL_MS   Idempotency cache TTL in ms (default: 300000)");
-  console.log("  FLINT_GATEWAY_USER_SETTINGS_PATH   Settings file path (default: ~/.flint/settings.json)");
+  console.log(
+    "  FLINT_GATEWAY_USER_SETTINGS_PATH   Settings file path (default: ~/.flint/settings.json)",
+  );
   console.log("  FLINT_GATEWAY_IDENTITY_LINKS       JSON map for cross-channel identity linking");
   console.log("  SLACK_BOT_TOKEN                    Slack bot token (enables Slack adapter)");
   console.log("  SLACK_SIGNING_SECRET               Slack webhook verification secret");

@@ -58,12 +58,12 @@ Terminal ──SDK──→ App Server ──→ Claude / Pi / Codex
   (TUI)
 ```
 
-| Component      | What it does                                                                 |
-| -------------- | ---------------------------------------------------------------------------- |
-| **Gateway**    | HTTP server that manages agent threads, routes messages, handles webhooks    |
-| **App Server** | JSON-RPC process that wraps the Claude Agent SDK, executes tools, streams events |
+| Component      | What it does                                                                      |
+| -------------- | --------------------------------------------------------------------------------- |
+| **Gateway**    | HTTP server that manages agent threads, routes messages, handles webhooks         |
+| **App Server** | JSON-RPC process that wraps the Claude Agent SDK, executes tools, streams events  |
 | **SDK**        | TypeScript client library — `AppServerClient` for local, `GatewayClient` for HTTP |
-| **TUI**        | Terminal interface for testing and demos                                     |
+| **TUI**        | Terminal interface for testing and demos                                          |
 
 ## Gateway API
 
@@ -142,19 +142,19 @@ bun run flint pi-app-server    # Pi app server standalone
 
 ## Environment Variables
 
-| Variable                     | Description                                          |
-| ---------------------------- | ---------------------------------------------------- |
-| `ANTHROPIC_API_KEY`          | Required for Claude-backed runs                      |
-| `PORT`                       | Gateway port (default: `8788`)                       |
-| `FLINT_PROJECT`              | Working directory override for the TUI               |
-| `FLINT_APP_SERVER_COMMAND`   | Override TUI app server command (default: `claude-app-server`) |
-| `FLINT_APP_SERVER_ARGS`      | Space-delimited args forwarded by TUI                |
-| `FLINT_GATEWAY_PROVIDER`     | Provider name (default: `claude`)                    |
-| `FLINT_GATEWAY_MODEL`        | Model override                                       |
-| `FLINT_GATEWAY_CWD`          | Gateway working directory                            |
+| Variable                     | Description                                                                        |
+| ---------------------------- | ---------------------------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`          | Required for Claude-backed runs                                                    |
+| `PORT`                       | Gateway port (default: `8788`)                                                     |
+| `FLINT_PROJECT`              | Working directory override for the TUI                                             |
+| `FLINT_APP_SERVER_COMMAND`   | Override TUI app server command (default: `claude-app-server`)                     |
+| `FLINT_APP_SERVER_ARGS`      | Space-delimited args forwarded by TUI                                              |
+| `FLINT_GATEWAY_PROVIDER`     | Provider name (default: `claude`)                                                  |
+| `FLINT_GATEWAY_MODEL`        | Model override                                                                     |
+| `FLINT_GATEWAY_CWD`          | Gateway working directory                                                          |
 | `FLINT_GATEWAY_ROUTING_MODE` | Thread routing: `main`, `per-peer`, `per-channel-peer`, `per-account-channel-peer` |
-| `SLACK_BOT_TOKEN`            | Slack bot token for channel adapter                  |
-| `SLACK_SIGNING_SECRET`       | Slack webhook verification secret                    |
+| `SLACK_BOT_TOKEN`            | Slack bot token for channel adapter                                                |
+| `SLACK_SIGNING_SECRET`       | Slack webhook verification secret                                                  |
 
 ## Development
 

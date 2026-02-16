@@ -237,13 +237,19 @@ function createStubGateway(
     getThread(threadId) {
       return threads.find((thread) => thread.threadId === threadId);
     },
-    handleMessage(message) {
+    async handleMessage(message, onEvent) {
+      if (onEvent) {
+        await onEvent({ type: "text", delta: "streaming" });
+        await onEvent({ type: "done" });
+      }
       return impl(message);
     },
-    handleThreadMessage(threadId, text) {
+    async handleThreadMessage(threadId, text, onEvent) {
       const thread = threads.find((candidate) => candidate.threadId === threadId);
-      if (!thread) {
-        return Promise.reject(new Error("Thread not found."));
+      if (!thread) throw new Error("Thread not found.");
+      if (onEvent) {
+        await onEvent({ type: "text", delta: "streaming" });
+        await onEvent({ type: "done" });
       }
       return impl({
         channel: thread.channel,
@@ -384,5 +390,73 @@ describe("createGatewayApp", () => {
     });
 
     expect(callCount).toBe(2);
+  });
+
+  test("streams SSE events when Accept: text/event-stream", async () => {
+    const threads: ThreadRecord[] = [];
+    const gateway = createStubGateway(async (message) => {
+      const threadId = `agent:main:direct:${message.userId}`;
+      threads.push({
+        threadId,
+        routingMode: "per-peer",
+        provider: "claude",
+        providerThreadId: "provider-thread-1",
+        channel: message.channel,
+        userId: message.userId,
+        chatType: "direct",
+        peerId: message.peerId ?? message.userId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      return {
+        threadId,
+        routingMode: "per-peer",
+        provider: "claude",
+        reply: "ok",
+      };
+    }, threads);
+
+    const fetchHandler = createGatewayApp({
+      gateway,
+      idempotency: new IdempotencyStore(300_000),
+      defaultProvider: "claude",
+      routingMode: "per-peer",
+    }).fetch;
+
+    const response = await fetchHandler(
+      new Request("http://localhost/v1/threads", {
+        method: "POST",
+        headers: { accept: "text/event-stream" },
+        body: JSON.stringify({
+          channel: "tui",
+          userId: "u1",
+          text: "hello",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+
+    const body = await response.text();
+    expect(body).toContain("event: text");
+    expect(body).toContain("event: done");
+    expect(body).toContain("event: result");
+
+    // Follow-up on existing thread
+    const followUp = await fetchHandler(
+      new Request("http://localhost/v1/threads/agent:main:direct:u1", {
+        method: "POST",
+        headers: { accept: "text/event-stream" },
+        body: JSON.stringify({ text: "follow up" }),
+      }),
+    );
+
+    expect(followUp.status).toBe(200);
+    expect(followUp.headers.get("content-type")).toBe("text/event-stream");
+
+    const followUpBody = await followUp.text();
+    expect(followUpBody).toContain("event: text");
+    expect(followUpBody).toContain("event: result");
   });
 });

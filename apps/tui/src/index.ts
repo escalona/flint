@@ -1,5 +1,10 @@
 import { Chalk } from "chalk";
-import { AppServerClient, type AgentEvent } from "@flint-dev/sdk";
+import {
+  AppServerClient,
+  GatewayAgentAdapter,
+  type AgentClient,
+  type AgentEvent,
+} from "@flint-dev/sdk";
 import {
   TUI,
   Text,
@@ -66,6 +71,8 @@ const APP_SERVER_ARGS = (process.env["FLINT_APP_SERVER_ARGS"] ?? "")
   .map((part) => part.trim())
   .filter((part) => part.length > 0);
 const IS_MAC = process.platform === "darwin";
+const urlIdx = process.argv.indexOf("--url");
+const GATEWAY_URL = urlIdx !== -1 ? process.argv[urlIdx + 1] : undefined;
 
 // ── Image pasting (macOS only) ───────────────────────────────────────────────
 
@@ -105,16 +112,19 @@ close access fileRef
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
-const client = new AppServerClient({
-  command: APP_SERVER_COMMAND,
-  args: APP_SERVER_ARGS,
-  cwd: PROJECT,
-});
+const client: AgentClient = GATEWAY_URL
+  ? new GatewayAgentAdapter({ baseUrl: GATEWAY_URL })
+  : new AppServerClient({
+      command: APP_SERVER_COMMAND,
+      args: APP_SERVER_ARGS,
+      cwd: PROJECT,
+    });
 
 try {
   await client.start();
 } catch (err) {
-  console.error(`Could not start app server: ${err instanceof Error ? err.message : String(err)}`);
+  const target = GATEWAY_URL ? `gateway at ${GATEWAY_URL}` : "app server";
+  console.error(`Could not start ${target}: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }
 
@@ -125,7 +135,15 @@ const threadId = await client.createThread();
 const terminal = new ProcessTerminal();
 const tui = new TUI(terminal);
 
-const header = new Text(chalk.dim(`thread ${threadId.slice(0, 8)}  •  ${PROJECT}`), 1, 0);
+const header = new Text(
+  chalk.dim(
+    GATEWAY_URL
+      ? `gateway ${new URL(GATEWAY_URL).host}`
+      : `thread ${threadId.slice(0, 8)}  •  ${PROJECT}`,
+  ),
+  1,
+  0,
+);
 tui.addChild(header);
 
 // ── Image indicator state ────────────────────────────────────────────────────

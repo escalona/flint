@@ -189,6 +189,7 @@ export class Thread {
       if (this.mcpServers) {
         sdkOptions.mcpServers = this.mcpServers;
       }
+      sdkOptions.settingSources = ["user", "project"];
 
       const ctx = { threadId: this.info.id, turnId };
 

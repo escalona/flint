@@ -5,7 +5,7 @@ export {
   type PromptOptions,
   type ResumeThreadOptions,
 } from "./app-server-client";
-export type { AgentEvent } from "./types";
+export type { AgentClient, AgentEvent } from "./types";
 export { createClient, type CreateClientOptions } from "./create-client";
 export { registerProvider, type Provider, type ProviderConfig } from "./providers";
 export {
@@ -20,3 +20,4 @@ export {
   type GatewaySendThreadRequest,
   type GatewayThreadRecord,
 } from "./gateway-client";
+export { GatewayAgentAdapter } from "./gateway-agent-adapter";

@@ -132,6 +132,34 @@ export class GatewayClient {
     );
   }
 
+  async createThreadStream(
+    payload: GatewayCreateThreadRequest,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    const response = await this.request("POST", "/v1/threads", {
+      body: payload,
+      accept: "text/event-stream",
+      signal,
+    });
+    if (!response.ok) throw await this.buildHttpError(response);
+    return response;
+  }
+
+  async sendThreadMessageStream(
+    threadId: string,
+    payload: GatewaySendThreadRequest | string,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    const body = typeof payload === "string" ? { text: payload } : payload;
+    const response = await this.request("POST", `/v1/threads/${encodeURIComponent(threadId)}`, {
+      body,
+      accept: "text/event-stream",
+      signal,
+    });
+    if (!response.ok) throw await this.buildHttpError(response);
+    return response;
+  }
+
   async interruptThread(threadId: string): Promise<boolean> {
     const response = await this.request(
       "POST",
@@ -158,7 +186,7 @@ export class GatewayClient {
     body?: unknown,
     idempotencyKey?: string,
   ): Promise<T> {
-    const response = await this.request(method, path, body, idempotencyKey);
+    const response = await this.request(method, path, { body, idempotencyKey });
     return this.parseJsonOrThrow<T>(response);
   }
 
@@ -178,25 +206,43 @@ export class GatewayClient {
     return parsed as T;
   }
 
+  private async buildHttpError(response: Response): Promise<GatewayHttpError> {
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      parsed = undefined;
+    }
+    return new GatewayHttpError(response.status, parsed);
+  }
+
   private request(
     method: string,
     path: string,
-    body?: unknown,
-    idempotencyKey?: string,
+    options?: {
+      body?: unknown;
+      idempotencyKey?: string;
+      accept?: string;
+      signal?: AbortSignal;
+    },
   ): Promise<Response> {
     const headers = new Headers(this.defaultHeaders);
-    if (idempotencyKey?.trim()) {
-      headers.set("idempotency-key", idempotencyKey.trim());
+    if (options?.idempotencyKey?.trim()) {
+      headers.set("idempotency-key", options.idempotencyKey.trim());
+    }
+    if (options?.accept) {
+      headers.set("accept", options.accept);
     }
 
     const requestInit: RequestInit = {
       method,
       headers,
+      signal: options?.signal,
     };
 
-    if (body !== undefined) {
+    if (options?.body !== undefined) {
       headers.set("content-type", "application/json");
-      requestInit.body = JSON.stringify(body);
+      requestInit.body = JSON.stringify(options.body);
     }
 
     return this.fetchImpl(`${this.baseUrl}${path}`, requestInit);
