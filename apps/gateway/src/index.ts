@@ -2,9 +2,16 @@ import { SlackAdapter, createWebhookHandler } from "@flint-dev/channels";
 import { createClient, type AgentEvent, type AppServerClient } from "@flint-dev/sdk";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import {
+  buildMemoryFileSystemPromptSection,
+  buildMemorySystemPromptSection,
+  loadMemoryRootFile,
+} from "./memory.ts";
+import { composeSystemPromptAppend } from "./system-context.ts";
 
 export type RoutingMode = "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
 export type ChatType = "direct" | "group" | "channel";
@@ -12,6 +19,8 @@ const USER_SETTINGS_PATH_ENV = "FLINT_GATEWAY_USER_SETTINGS_PATH";
 const ENV_VAR_REF_REGEX = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
 const ESCAPED_ENV_VAR_REF_REGEX = /\$\$\{([A-Z_][A-Z0-9_]*)\}/g;
 const ESCAPED_ENV_VAR_SENTINEL = "__FLINT_ESCAPED_ENV_VAR__";
+const MEMORY_MCP_DEFAULT_ALIAS = "flint_memory";
+const DEFAULT_IDLE_TIMEOUT_SECONDS = 120;
 
 interface McpProfileDefinition {
   profiles?: string[];
@@ -68,6 +77,11 @@ interface ThreadRuntime {
   mcpProfileIds: string[];
 }
 
+interface GatewayMemoryMcpServer {
+  alias: string;
+  server: Record<string, unknown>;
+}
+
 export interface GatewayOptions {
   cwd: string;
   defaultRoutingMode: RoutingMode;
@@ -77,6 +91,7 @@ export interface GatewayOptions {
   identityLinks: Record<string, string[]>;
   mcpProfiles: Record<string, McpProfileDefinition>;
   defaultMcpProfileIds: string[];
+  memoryMcpServer?: GatewayMemoryMcpServer;
 }
 
 export interface GatewayReply {
@@ -387,10 +402,14 @@ export class FlintGateway {
     const requestedProvider =
       normalizeToken(message.provider) || normalizeToken(this.options.defaultProvider);
     const provider = normalizeToken(record?.provider) || requestedProvider || "claude";
-    const requestedMcpServers =
-      provider === "claude"
-        ? resolveMcpServersFromProfiles(requestedMcpProfileIds, this.options.mcpProfiles)
-        : undefined;
+    const profileMcpServers = resolveMcpServersFromProfiles(
+      requestedMcpProfileIds,
+      this.options.mcpProfiles,
+    );
+    const requestedMcpServers = mergeMemoryMcpServer(
+      profileMcpServers,
+      this.options.memoryMcpServer,
+    );
 
     const client = createClient({
       provider,
@@ -398,12 +417,14 @@ export class FlintGateway {
       env: process.env as Record<string, string>,
     });
     await client.start();
+    const systemPromptAppend = await this.resolveSystemPromptAppend();
 
     let providerThreadId: string;
     if (record?.providerThreadId) {
       try {
         providerThreadId = await client.resumeThread(record.providerThreadId, {
           cwd: this.options.cwd,
+          ...(systemPromptAppend && { systemPromptAppend }),
           ...(requestedMcpServers && { mcpServers: requestedMcpServers }),
         });
       } catch (error) {
@@ -412,12 +433,14 @@ export class FlintGateway {
         );
         providerThreadId = await client.createThread({
           ...(this.options.model && { model: this.options.model }),
+          ...(systemPromptAppend && { systemPromptAppend }),
           ...(requestedMcpServers && { mcpServers: requestedMcpServers }),
         });
       }
     } else {
       providerThreadId = await client.createThread({
         ...(this.options.model && { model: this.options.model }),
+        ...(systemPromptAppend && { systemPromptAppend }),
         ...(requestedMcpServers && { mcpServers: requestedMcpServers }),
       });
       const now = new Date().toISOString();
@@ -446,6 +469,13 @@ export class FlintGateway {
     const runtime = { client, providerThreadId, provider, mcpProfileIds: requestedMcpProfileIds };
     this.runtimes.set(threadId, runtime);
     return runtime;
+  }
+
+  private async resolveSystemPromptAppend(): Promise<string | undefined> {
+    if (!this.options.memoryMcpServer) {
+      return undefined;
+    }
+    return loadGatewaySystemPromptAppend(this.options.cwd);
   }
 
   private async runTurn(
@@ -979,9 +1009,56 @@ function resolveMcpServersFromProfiles(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+function mergeMemoryMcpServer(
+  mcpServers: Record<string, unknown> | undefined,
+  memoryMcpServer: GatewayMemoryMcpServer | undefined,
+): Record<string, unknown> | undefined {
+  if (!memoryMcpServer) {
+    return mcpServers;
+  }
+
+  const merged: Record<string, unknown> = {};
+  if (mcpServers) {
+    Object.assign(merged, mcpServers);
+  }
+
+  const baseAlias = memoryMcpServer.alias.trim() || MEMORY_MCP_DEFAULT_ALIAS;
+  let alias = baseAlias;
+  let suffix = 1;
+  while (Object.prototype.hasOwnProperty.call(merged, alias)) {
+    alias = `${baseAlias}_${suffix}`;
+    suffix += 1;
+  }
+
+  merged[alias] = memoryMcpServer.server;
+  return merged;
+}
+
 export function readRoutingModeFromEnv(env: Record<string, string | undefined>): RoutingMode {
   const mode = parseRoutingMode(env["FLINT_GATEWAY_ROUTING_MODE"]);
   return mode ?? "per-peer";
+}
+
+function readGatewayIdleTimeoutSeconds(value: string | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_IDLE_TIMEOUT_SECONDS;
+  }
+  return Math.max(5, Math.floor(parsed));
+}
+
+function readBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return fallback;
 }
 
 export interface GatewayLike {
@@ -1243,7 +1320,9 @@ export interface GatewayRuntime {
   routingMode: RoutingMode;
   storePath: string;
   idempotencyTtlMs: number;
+  idleTimeoutSeconds: number;
   mcpProfileCount: number;
+  memoryEnabled: boolean;
 }
 
 export async function createGatewayRuntime(
@@ -1262,9 +1341,15 @@ export async function createGatewayRuntime(
     1_000,
     Number(env["FLINT_GATEWAY_IDEMPOTENCY_TTL_MS"] ?? 300_000),
   );
+  const idleTimeoutSeconds = readGatewayIdleTimeoutSeconds(
+    env["FLINT_GATEWAY_IDLE_TIMEOUT_SECONDS"],
+  );
+  const memoryEnabled = readBooleanEnv(env["FLINT_GATEWAY_MEMORY_ENABLED"], true);
   const settings = await readGatewaySettings(env);
   const mcpProfiles = parseMcpProfilesFromSettings(settings, env);
   const defaultMcpProfileIds = parseDefaultMcpProfileIdsFromSettings(settings, mcpProfiles);
+  const memoryWorkspaceDir = resolve(cwd);
+  const memoryMcpServer = memoryEnabled ? createMemoryMcpServer(memoryWorkspaceDir) : undefined;
 
   const gateway = new FlintGateway({
     cwd,
@@ -1275,6 +1360,7 @@ export async function createGatewayRuntime(
     identityLinks,
     mcpProfiles,
     defaultMcpProfileIds,
+    memoryMcpServer,
   });
   await gateway.start();
 
@@ -1304,7 +1390,41 @@ export async function createGatewayRuntime(
     routingMode,
     storePath,
     idempotencyTtlMs,
+    idleTimeoutSeconds,
     mcpProfileCount: Object.keys(mcpProfiles).length,
+    memoryEnabled,
+  };
+}
+
+async function loadGatewaySystemPromptAppend(workspaceDir: string): Promise<string | undefined> {
+  const memoryRootFile = await loadMemoryRootFile(workspaceDir);
+  return composeSystemPromptAppend([
+    {
+      title: "Memory Recall",
+      content: buildMemorySystemPromptSection(),
+    },
+    ...(memoryRootFile
+      ? [
+          {
+            title: memoryRootFile.path,
+            content: buildMemoryFileSystemPromptSection(memoryRootFile),
+          },
+        ]
+      : []),
+  ]);
+}
+
+function createMemoryMcpServer(workspaceDir: string): GatewayMemoryMcpServer {
+  const gatewaySrcDir = dirname(fileURLToPath(import.meta.url));
+  const entryPath = join(gatewaySrcDir, "memory-mcp-server.ts");
+
+  return {
+    alias: MEMORY_MCP_DEFAULT_ALIAS,
+    server: {
+      type: "stdio",
+      command: "bun",
+      args: [entryPath, "--workspace", workspaceDir],
+    },
   };
 }
 
@@ -1329,6 +1449,7 @@ export async function startGatewayServer(
   const server = Bun.serve({
     port: runtime.port,
     fetch: app.fetch,
+    idleTimeout: runtime.idleTimeoutSeconds,
   });
 
   console.log(`[gateway] listening on http://127.0.0.1:${server.port}`);
@@ -1340,7 +1461,9 @@ export async function startGatewayServer(
   }
   console.log(`[gateway] store: ${runtime.storePath}`);
   console.log(`[gateway] idempotency ttl ms: ${runtime.idempotencyTtlMs}`);
+  console.log(`[gateway] idle timeout sec: ${runtime.idleTimeoutSeconds}`);
   console.log(`[gateway] mcp profiles: ${runtime.mcpProfileCount}`);
+  console.log(`[gateway] memory: ${runtime.memoryEnabled ? "enabled" : "disabled"}`);
 
   const shutdown = async (signal: string, exitProcess = false) => {
     console.log(`\n[gateway] received ${signal}, shutting down`);
@@ -1393,6 +1516,10 @@ function printHelp(): void {
     "  FLINT_GATEWAY_STORE_PATH           Thread store path (default: ~/.flint/gateway/threads.json)",
   );
   console.log("  FLINT_GATEWAY_IDEMPOTENCY_TTL_MS   Idempotency cache TTL in ms (default: 300000)");
+  console.log("  FLINT_GATEWAY_IDLE_TIMEOUT_SECONDS HTTP idle timeout in seconds (default: 120)");
+  console.log(
+    "  FLINT_GATEWAY_MEMORY_ENABLED       Enable memory tools and memory recall guidance (default: true)",
+  );
   console.log(
     "  FLINT_GATEWAY_USER_SETTINGS_PATH   Settings file path (default: ~/.flint/settings.json)",
   );

@@ -68,9 +68,14 @@ class ThreadManager {
    */
   async getWithTurns(
     threadId: string,
+    options?: Pick<ThreadOptions, "systemPrompt" | "systemPromptAppend">,
   ): Promise<{ thread: ThreadType; model: string; cwd: string } | null> {
     const thread = await this.get(threadId);
     if (!thread) return null;
+    thread.setPromptConfig({
+      systemPrompt: options?.systemPrompt,
+      systemPromptAppend: options?.systemPromptAppend,
+    });
 
     return {
       thread: thread.getInfo(), // includes turns

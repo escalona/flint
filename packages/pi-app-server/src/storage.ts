@@ -17,6 +17,8 @@ interface ThreadData {
   info: Thread;
   turns: Turn[];
   piSessionFile?: string;
+  systemPrompt?: string;
+  systemPromptAppend?: string;
 }
 
 interface RolloutSnapshotLine {

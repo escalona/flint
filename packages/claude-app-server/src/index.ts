@@ -10,6 +10,8 @@ import { stdio } from "@flint-dev/app-server-core";
 import { processRequest } from "./processor.ts";
 import { storage } from "./storage.ts";
 
+process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY ??= "1";
+
 async function main(): Promise<void> {
   // Initialize storage
   await storage.init();

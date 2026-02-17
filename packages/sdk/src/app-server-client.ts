@@ -28,6 +28,8 @@ interface JsonRpcNotification {
 type JsonRpcMessage = JsonRpcResponse | JsonRpcNotification;
 
 export interface AppServerClientOptions {
+  /** Provider name (used for provider-specific request mapping) */
+  provider?: string;
   /** Command to spawn the app server */
   command: string;
   /** Arguments to pass to the command */
@@ -43,6 +45,8 @@ export interface CreateThreadOptions {
   model?: string;
   /** Optional provider-specific system prompt override */
   systemPrompt?: string;
+  /** Optional provider-agnostic context to append to system/developer instructions */
+  systemPromptAppend?: string;
   /** Optional MCP server config (provider-specific) */
   mcpServers?: Record<string, unknown>;
 }
@@ -57,6 +61,10 @@ export interface ResumeThreadOptions {
   cwd?: string;
   /** Override model when resuming */
   model?: string;
+  /** Optional provider-specific system prompt override */
+  systemPrompt?: string;
+  /** Optional provider-agnostic context to append to system/developer instructions */
+  systemPromptAppend?: string;
   /** Optional MCP server config (provider-specific) */
   mcpServers?: Record<string, unknown>;
 }
@@ -83,12 +91,14 @@ export class AppServerClient {
   private readonly args: string[];
   private readonly cwd: string;
   private readonly env: Record<string, string> | undefined;
+  private readonly provider: string;
 
   constructor(options: AppServerClientOptions) {
     this.command = options.command;
     this.args = options.args ?? [];
     this.cwd = options.cwd;
     this.env = options.env;
+    this.provider = (options.provider ?? "").trim().toLowerCase();
   }
 
   /** Start the app server process and initialize it. */
@@ -126,24 +136,19 @@ export class AppServerClient {
 
   /** Create a new thread. Returns the thread ID. */
   async createThread(options?: CreateThreadOptions): Promise<string> {
-    const result = (await this.request("thread/start", {
-      cwd: this.cwd,
-      ...(options?.model && { model: options.model }),
-      ...(options?.systemPrompt && { systemPrompt: options.systemPrompt }),
-      ...(options?.mcpServers && { mcpServers: options.mcpServers }),
-    })) as { thread: { id: string } };
+    const result = (await this.request("thread/start", this.buildThreadStartParams(options))) as {
+      thread: { id: string };
+    };
     this.threadId = result.thread.id;
     return this.threadId;
   }
 
   /** Resume an existing thread. Returns the thread ID. */
   async resumeThread(threadId: string, options?: ResumeThreadOptions): Promise<string> {
-    const result = (await this.request("thread/resume", {
-      threadId,
-      ...(options?.cwd && { cwd: options.cwd }),
-      ...(options?.model && { model: options.model }),
-      ...(options?.mcpServers && { mcpServers: options.mcpServers }),
-    })) as { thread: { id: string } };
+    const result = (await this.request(
+      "thread/resume",
+      this.buildThreadResumeParams(threadId, options),
+    )) as { thread: { id: string } };
     this.threadId = result.thread.id;
     return this.threadId;
   }
@@ -243,6 +248,65 @@ export class AppServerClient {
   }
 
   // ── Private ──────────────────────────────────────────────────────────────
+
+  private buildThreadStartParams(options?: CreateThreadOptions): Record<string, unknown> {
+    const params: Record<string, unknown> = {
+      cwd: this.cwd,
+      ...(options?.model && { model: options.model }),
+    };
+    this.applyInstructionParams(params, options?.systemPrompt, options?.systemPromptAppend);
+    this.applyMcpParams(params, options?.mcpServers);
+    return params;
+  }
+
+  private buildThreadResumeParams(
+    threadId: string,
+    options?: ResumeThreadOptions,
+  ): Record<string, unknown> {
+    const params: Record<string, unknown> = {
+      threadId,
+      ...(options?.cwd && { cwd: options.cwd }),
+      ...(options?.model && { model: options.model }),
+    };
+    this.applyInstructionParams(params, options?.systemPrompt, options?.systemPromptAppend);
+    this.applyMcpParams(params, options?.mcpServers);
+    return params;
+  }
+
+  private applyInstructionParams(
+    params: Record<string, unknown>,
+    systemPrompt: string | undefined,
+    systemPromptAppend: string | undefined,
+  ): void {
+    if (systemPrompt) {
+      if (this.provider === "codex") {
+        params.baseInstructions = systemPrompt;
+      } else {
+        params.systemPrompt = systemPrompt;
+      }
+    }
+    if (systemPromptAppend) {
+      if (this.provider === "codex") {
+        params.developerInstructions = systemPromptAppend;
+      } else {
+        params.systemPromptAppend = systemPromptAppend;
+      }
+    }
+  }
+
+  private applyMcpParams(
+    params: Record<string, unknown>,
+    mcpServers: Record<string, unknown> | undefined,
+  ): void {
+    if (!mcpServers) {
+      return;
+    }
+    if (this.provider === "codex") {
+      params.config = normalizeMcpServersForCodexConfigOverrides(mcpServers);
+    } else {
+      params.mcpServers = mcpServers;
+    }
+  }
 
   private async request(method: string, params?: unknown): Promise<unknown> {
     if (!this.stdin) throw new Error("App server not started");
@@ -521,4 +585,57 @@ export class AppServerClient {
 
     return events;
   }
+}
+
+function normalizeMcpServersForCodex(mcpServers: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {};
+  for (const [name, rawConfig] of Object.entries(mcpServers)) {
+    const cfg = isRecord(rawConfig) ? rawConfig : {};
+    const type = typeof cfg.type === "string" ? cfg.type.toLowerCase() : undefined;
+
+    if (type === "stdio") {
+      normalized[name] = {
+        ...(typeof cfg.command === "string" ? { command: cfg.command } : {}),
+        ...(Array.isArray(cfg.args) ? { args: cfg.args } : {}),
+        ...(isRecord(cfg.env) ? { env: cfg.env } : {}),
+        ...(typeof cfg.cwd === "string" ? { cwd: cfg.cwd } : {}),
+      };
+      continue;
+    }
+
+    if (type === "http" || type === "streamable_http") {
+      normalized[name] = {
+        ...(typeof cfg.url === "string" ? { url: cfg.url } : {}),
+        ...(isRecord(cfg.headers) ? { http_headers: cfg.headers } : {}),
+        ...(isRecord(cfg.envHeaders) ? { env_http_headers: cfg.envHeaders } : {}),
+        ...(typeof cfg.bearerTokenEnvVar === "string"
+          ? { bearer_token_env_var: cfg.bearerTokenEnvVar }
+          : {}),
+      };
+      continue;
+    }
+
+    normalized[name] = cfg;
+  }
+  return normalized;
+}
+
+function normalizeMcpServersForCodexConfigOverrides(
+  mcpServers: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalized = normalizeMcpServersForCodex(mcpServers);
+  const configOverrides: Record<string, unknown> = {};
+  for (const [name, config] of Object.entries(normalized)) {
+    if (!isRecord(config)) {
+      continue;
+    }
+    for (const [key, value] of Object.entries(config)) {
+      configOverrides[`mcp_servers.${name}.${key}`] = value;
+    }
+  }
+  return configOverrides;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

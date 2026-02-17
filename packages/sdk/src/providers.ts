@@ -16,10 +16,14 @@ const claudeProvider: Provider = {
     const pkgPath = resolvePackagePath("@flint-dev/claude-app-server/package.json");
     const entry = join(dirname(pkgPath), "src/index.ts");
     return {
+      provider: "claude",
       command: "bun",
       args: ["run", entry],
       cwd: config.cwd,
-      env: config.env,
+      env: {
+        ...config.env,
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+      },
     };
   },
 };
@@ -27,6 +31,7 @@ const claudeProvider: Provider = {
 const codexProvider: Provider = {
   resolve(config) {
     return {
+      provider: "codex",
       command: "codex",
       args: ["app-server"],
       cwd: config.cwd,
@@ -40,6 +45,7 @@ const piProvider: Provider = {
     const pkgPath = resolvePackagePath("@flint-dev/pi-app-server/package.json");
     const entry = join(dirname(pkgPath), "src/index.ts");
     return {
+      provider: "pi",
       command: "bun",
       args: ["run", entry],
       cwd: config.cwd,

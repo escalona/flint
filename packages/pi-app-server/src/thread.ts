@@ -14,6 +14,8 @@ import { parsePiModel } from "./pi-model.ts";
 export interface ThreadOptions {
   model: string;
   cwd: string;
+  systemPrompt?: string;
+  systemPromptAppend?: string;
 }
 
 export interface TurnOverrides {
@@ -31,6 +33,8 @@ export class Thread {
   private piSessionFile?: string;
   private rpcClient: PiRpcClient | null = null;
   private rpcCwd?: string;
+  private systemPrompt?: string;
+  private systemPromptAppend?: string;
   private abortController?: AbortController;
   private currentTurnId?: string;
 
@@ -48,6 +52,8 @@ export class Thread {
       source: "appServer",
       turns: [],
     };
+    this.systemPrompt = normalizeSystemPrompt(options.systemPrompt);
+    this.systemPromptAppend = normalizeSystemPrompt(options.systemPromptAppend);
   }
 
   static async load(threadId: string): Promise<Thread | null> {
@@ -62,6 +68,8 @@ export class Thread {
     (thread as { info: ThreadType }).info = data.info;
     thread.turns = data.turns;
     thread.piSessionFile = data.piSessionFile;
+    thread.systemPrompt = normalizeSystemPrompt(data.systemPrompt);
+    thread.systemPromptAppend = normalizeSystemPrompt(data.systemPromptAppend);
 
     return thread;
   }
@@ -71,6 +79,8 @@ export class Thread {
       info: this.info,
       turns: this.turns,
       piSessionFile: this.piSessionFile,
+      systemPrompt: this.systemPrompt,
+      systemPromptAppend: this.systemPromptAppend,
     });
   }
 
@@ -92,6 +102,15 @@ export class Thread {
 
   getCurrentTurnId(): string | undefined {
     return this.currentTurnId;
+  }
+
+  setPromptConfig(options: { systemPrompt?: string; systemPromptAppend?: string }): void {
+    if (options.systemPrompt !== undefined) {
+      this.systemPrompt = normalizeSystemPrompt(options.systemPrompt);
+    }
+    if (options.systemPromptAppend !== undefined) {
+      this.systemPromptAppend = normalizeSystemPrompt(options.systemPromptAppend);
+    }
   }
 
   async *executeTurn(
@@ -166,7 +185,7 @@ export class Thread {
         notifyEvents?.();
       });
 
-      await rpc.prompt(prompt);
+      await rpc.prompt(this.buildPromptWithContext(prompt));
 
       while (!sawAgentEnd || events.length > 0) {
         if (events.length === 0) {
@@ -323,4 +342,19 @@ export class Thread {
     this.rpcClient = null;
     this.rpcCwd = undefined;
   }
+
+  private buildPromptWithContext(prompt: string): string {
+    const sections = [this.systemPrompt, this.systemPromptAppend]
+      .map((entry) => entry?.trim())
+      .filter((entry): entry is string => Boolean(entry));
+    if (sections.length === 0) {
+      return prompt;
+    }
+    return ["<system_context>", ...sections, "</system_context>", "", prompt].join("\n").trim();
+  }
+}
+
+function normalizeSystemPrompt(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
 }

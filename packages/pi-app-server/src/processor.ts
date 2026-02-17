@@ -153,7 +153,14 @@ async function handleInitialize(_params: InitializeParams): Promise<InitializeRe
 async function handleThreadStart(params: ThreadStartParams): Promise<ThreadStartResult> {
   const model = params.model ?? defaultModel;
   const cwd = params.cwd ?? defaultCwd;
-  const thread = await threadManager.create({ model, cwd });
+  const systemPromptAppend =
+    (params.systemPromptAppend ?? params.developerInstructions)?.trim() || undefined;
+  const thread = await threadManager.create({
+    model,
+    cwd,
+    systemPrompt: params.systemPrompt,
+    systemPromptAppend,
+  });
 
   return {
     thread: thread.getInfoWithoutTurns(),
@@ -162,7 +169,12 @@ async function handleThreadStart(params: ThreadStartParams): Promise<ThreadStart
 }
 
 async function handleThreadResume(params: ThreadResumeParams): Promise<ThreadResumeResult> {
-  const result = await threadManager.getWithTurns(params.threadId);
+  const systemPromptAppend =
+    (params.systemPromptAppend ?? params.developerInstructions)?.trim() || undefined;
+  const result = await threadManager.getWithTurns(params.threadId, {
+    systemPrompt: params.systemPrompt,
+    systemPromptAppend,
+  });
   if (!result) {
     throw new RpcError(ErrorCodes.ThreadNotFound, `Thread not found: ${params.threadId}`);
   }

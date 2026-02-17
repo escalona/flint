@@ -1,6 +1,6 @@
 {
   "name": "@flint-dev/pi-app-server",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Provider-integrated app server variant",
   "license": "MIT",
   "author": "Aaron Escalona",

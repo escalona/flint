@@ -18,6 +18,7 @@ interface ThreadData {
   turns: Turn[];
   sdkSessionId?: string;
   systemPrompt?: string;
+  systemPromptAppend?: string;
 }
 
 interface RolloutSnapshotLine {

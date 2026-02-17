@@ -29,6 +29,7 @@ export interface ThreadOptions {
   cwd: string;
   mcpServers?: McpServersConfig;
   systemPrompt?: string;
+  systemPromptAppend?: string;
 }
 
 export interface TurnOverrides {
@@ -43,6 +44,7 @@ export class Thread {
   private sdkSessionId?: string;
   private mcpServers?: McpServersConfig;
   private systemPrompt?: string;
+  private systemPromptAppend?: string;
   private abortController?: AbortController;
   private currentTurnId?: string;
 
@@ -66,6 +68,7 @@ export class Thread {
     };
     this.mcpServers = options.mcpServers;
     this.systemPrompt = normalizeSystemPrompt(options.systemPrompt);
+    this.systemPromptAppend = normalizeSystemPromptAppend(options.systemPromptAppend);
   }
 
   static async load(threadId: string): Promise<Thread | null> {
@@ -82,6 +85,7 @@ export class Thread {
     thread.turns = data.turns;
     thread.sdkSessionId = data.sdkSessionId;
     thread.systemPrompt = normalizeSystemPrompt(data.systemPrompt);
+    thread.systemPromptAppend = normalizeSystemPromptAppend(data.systemPromptAppend);
 
     return thread;
   }
@@ -92,6 +96,7 @@ export class Thread {
       turns: this.turns,
       sdkSessionId: this.sdkSessionId,
       systemPrompt: this.systemPrompt,
+      systemPromptAppend: this.systemPromptAppend,
     });
   }
 
@@ -117,6 +122,15 @@ export class Thread {
 
   setMcpServers(mcpServers: McpServersConfig | undefined): void {
     this.mcpServers = mcpServers;
+  }
+
+  setPromptConfig(options: { systemPrompt?: string; systemPromptAppend?: string }): void {
+    if (options.systemPrompt !== undefined) {
+      this.systemPrompt = normalizeSystemPrompt(options.systemPrompt);
+    }
+    if (options.systemPromptAppend !== undefined) {
+      this.systemPromptAppend = normalizeSystemPromptAppend(options.systemPromptAppend);
+    }
   }
 
   /**
@@ -183,7 +197,7 @@ export class Thread {
         cwd: overrides?.cwd ?? this.info.cwd,
         includePartialMessages: true,
         maxThinkingTokens,
-        systemPrompt: this.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+        systemPrompt: this.resolveSystemPrompt(),
         ...(this.sdkSessionId && { resume: this.sdkSessionId }),
       };
       if (this.mcpServers) {
@@ -304,9 +318,31 @@ export class Thread {
     this.info.updatedAt = Math.floor(Date.now() / 1000);
     await this.save();
   }
+
+  private resolveSystemPrompt(): SystemPromptConfig {
+    if (this.systemPrompt) {
+      if (this.systemPromptAppend) {
+        return `${this.systemPrompt}\n\n${this.systemPromptAppend}`;
+      }
+      return this.systemPrompt;
+    }
+    if (this.systemPromptAppend) {
+      return {
+        type: "preset",
+        preset: "claude_code",
+        append: this.systemPromptAppend,
+      };
+    }
+    return DEFAULT_SYSTEM_PROMPT;
+  }
 }
 
 function normalizeSystemPrompt(systemPrompt: string | undefined): string | undefined {
   const normalized = systemPrompt?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function normalizeSystemPromptAppend(systemPromptAppend: string | undefined): string | undefined {
+  const normalized = systemPromptAppend?.trim();
   return normalized ? normalized : undefined;
 }

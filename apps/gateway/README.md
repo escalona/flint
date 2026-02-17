@@ -10,6 +10,8 @@ HTTP gateway prototype for routing normalized channel messages into Flint app se
 - Persists thread records to disk (`~/.flint/gateway/threads.json`)
 - Uses `@flint-dev/sdk` providers (`claude`, `pi`, `codex`, or registered custom providers)
 - Supports idempotency keys with in-flight dedupe and replay cache
+- Appends memory recall guidance and `MEMORY.md`/`memory.md` contents to provider system/developer instructions
+- Exposes model-callable memory MCP tools (`memory_search`, `memory_get`)
 
 ## Run
 
@@ -29,7 +31,9 @@ Optional env vars:
 - `FLINT_GATEWAY_STORE_PATH` (default: `~/.flint/gateway/threads.json`)
 - `FLINT_GATEWAY_IDENTITY_LINKS` (optional JSON map for cross-channel identity collapse)
 - `FLINT_GATEWAY_IDEMPOTENCY_TTL_MS` (default: `300000`)
+- `FLINT_GATEWAY_IDLE_TIMEOUT_SECONDS` (default: `120`)
 - `FLINT_GATEWAY_USER_SETTINGS_PATH` (optional override; default: `~/.flint/settings.json`)
+- `FLINT_GATEWAY_MEMORY_ENABLED` (default: `true`)
 
 ## API
 
@@ -82,7 +86,9 @@ Response:
 
 Optional: send `Idempotency-Key` HTTP header instead of body `idempotencyKey`.
 
-When `provider` is `claude`, gateway resolves `mcpProfileIds` to server-side MCP configs and forwards those to the Claude app server for thread create/resume.
+Gateway resolves `mcpProfileIds` to server-side MCP configs and forwards those to provider app servers on thread create/resume.
+When memory is enabled, gateway also injects a built-in stdio MCP server that exposes `memory_search` and `memory_get`.
+When memory is enabled, gateway also loads root memory context from `MEMORY.md` (fallback `memory.md`) and appends it to provider system/developer instructions.
 When `mcpProfileIds` is omitted in a request, gateway falls back to `gateway.defaultMcpProfileIds` from settings.
 
 ### `settings.json` example

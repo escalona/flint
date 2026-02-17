@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -191,6 +191,57 @@ describe("MCP settings", () => {
     } finally {
       console.warn = originalWarn;
     }
+  });
+
+  test("uses configurable gateway idle timeout with sane default", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "flint-gateway-timeout-"));
+    const storePath = join(dir, "threads.json");
+
+    const defaultRuntime = await createGatewayRuntime({
+      FLINT_GATEWAY_CWD: dir,
+      FLINT_GATEWAY_STORE_PATH: storePath,
+    });
+    expect(defaultRuntime.idleTimeoutSeconds).toBe(120);
+    await defaultRuntime.gateway.close();
+
+    const configuredRuntime = await createGatewayRuntime({
+      FLINT_GATEWAY_CWD: dir,
+      FLINT_GATEWAY_STORE_PATH: storePath,
+      FLINT_GATEWAY_IDLE_TIMEOUT_SECONDS: "240",
+    });
+    expect(configuredRuntime.idleTimeoutSeconds).toBe(240);
+    await configuredRuntime.gateway.close();
+  });
+});
+
+describe("memory system prompt append", () => {
+  test("injects MEMORY.md contents into system prompt append", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "flint-gateway-memory-append-"));
+    const storePath = join(dir, "threads.json");
+    await writeFile(join(dir, "MEMORY.md"), "The user prefers concise updates.\n");
+
+    const runtime = await createGatewayRuntime({
+      FLINT_GATEWAY_CWD: dir,
+      FLINT_GATEWAY_STORE_PATH: storePath,
+      FLINT_GATEWAY_PROVIDER: "claude",
+    });
+
+    const gatewayInternals = runtime.gateway as unknown as {
+      resolveSystemPromptAppend: () => Promise<string | undefined>;
+      options?: { memoryMcpServer?: unknown };
+    };
+    const systemPromptAppend = await gatewayInternals.resolveSystemPromptAppend();
+
+    expect(systemPromptAppend).toContain("## Memory Recall");
+    expect(systemPromptAppend).toContain("## MEMORY.md");
+    expect(systemPromptAppend).toContain("Loaded from MEMORY.md:");
+    expect(systemPromptAppend).toContain("The user prefers concise updates.");
+    expect(gatewayInternals.options?.memoryMcpServer).toBeDefined();
+    await writeFile(join(dir, "MEMORY.md"), "The user now prefers detailed updates.\n");
+    const refreshedPromptAppend = await gatewayInternals.resolveSystemPromptAppend();
+    expect(refreshedPromptAppend).toContain("The user now prefers detailed updates.");
+
+    await runtime.gateway.close();
   });
 });
 
@@ -459,4 +510,5 @@ describe("createGatewayApp", () => {
     expect(followUpBody).toContain("event: text");
     expect(followUpBody).toContain("event: result");
   });
+
 });

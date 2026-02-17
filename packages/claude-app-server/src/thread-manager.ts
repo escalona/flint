@@ -68,11 +68,15 @@ class ThreadManager {
    */
   async getWithTurns(
     threadId: string,
-    options?: Pick<ThreadOptions, "mcpServers">,
+    options?: Pick<ThreadOptions, "mcpServers" | "systemPrompt" | "systemPromptAppend">,
   ): Promise<{ thread: ThreadType; model: string; cwd: string } | null> {
     const thread = await this.get(threadId);
     if (!thread) return null;
     thread.setMcpServers(options?.mcpServers);
+    thread.setPromptConfig({
+      systemPrompt: options?.systemPrompt,
+      systemPromptAppend: options?.systemPromptAppend,
+    });
 
     return {
       thread: thread.getInfo(), // includes turns

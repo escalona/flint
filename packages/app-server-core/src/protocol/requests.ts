@@ -78,6 +78,10 @@ export interface ThreadStartParams {
   model?: string;
   cwd?: string;
   systemPrompt?: string;
+  systemPromptAppend?: string;
+  developerInstructions?: string;
+  baseInstructions?: string;
+  config?: Record<string, unknown>;
   mcpServers?: Record<string, unknown>;
   approvalPolicy?: ApprovalPolicy;
   sandbox?: SandboxPolicy;
@@ -92,6 +96,11 @@ export interface ThreadResumeParams {
   threadId: string;
   model?: string;
   cwd?: string;
+  systemPrompt?: string;
+  systemPromptAppend?: string;
+  developerInstructions?: string;
+  baseInstructions?: string;
+  config?: Record<string, unknown>;
   mcpServers?: Record<string, unknown>;
 }
 
