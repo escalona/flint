@@ -486,20 +486,42 @@ export class FlintGateway {
     const promptOptions = this.options.model ? { model: this.options.model } : undefined;
     let responseText = "";
     let terminalError: string | null = null;
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    for await (const event of client.prompt(inputText, promptOptions)) {
-      if (onEvent) await onEvent(event);
-      switch (event.type) {
-        case "text":
-          responseText += event.delta;
-          break;
-        case "tool_start":
-        case "tool_end":
-          break;
-        case "error":
-          terminalError = event.message;
-          break;
+    // Interrupt the agent if no events arrive for 2 minutes (matches Claude Code CLI default).
+    const resetTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async () => {
+        timedOut = true;
+        console.warn("[gateway] turn inactive for 120s, interrupting agent");
+        await client.interrupt();
+      }, 120_000);
+    };
+
+    resetTimer();
+    try {
+      for await (const event of client.prompt(inputText, promptOptions)) {
+        resetTimer();
+        if (onEvent) await onEvent(event);
+        switch (event.type) {
+          case "text":
+            responseText += event.delta;
+            break;
+          case "tool_start":
+          case "tool_end":
+            break;
+          case "error":
+            terminalError = event.message;
+            break;
+        }
       }
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+
+    if (timedOut) {
+      throw new Error("Turn interrupted: no agent activity for 120s.");
     }
 
     if (terminalError) {
