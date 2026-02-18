@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   createGatewayApp,
   createGatewayRuntime,
+  FlintGateway,
   IdempotencyStore,
   parseInboundMessage,
   resolveThreadId,
@@ -13,6 +14,7 @@ import {
   type InboundMessage,
   type ThreadRecord,
 } from "./index.ts";
+import { resolveSessionLifecycleConfig } from "./session-lifecycle.ts";
 
 async function jsonBody(response: Response): Promise<Record<string, unknown>> {
   return (await response.json()) as Record<string, unknown>;
@@ -212,6 +214,53 @@ describe("MCP settings", () => {
     expect(configuredRuntime.idleTimeoutSeconds).toBe(240);
     await configuredRuntime.gateway.close();
   });
+
+  test("loads session lifecycle settings from user settings", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "flint-gateway-session-settings-"));
+    const userPath = join(dir, "user-settings.json");
+    const storePath = join(dir, "threads.json");
+
+    await Bun.write(
+      userPath,
+      JSON.stringify({
+        gateway: {
+          session: {
+            reset: {
+              mode: "daily",
+              atHour: 5,
+              idleMinutes: 180,
+            },
+            resetByType: {
+              direct: { mode: "idle", idleMinutes: 45 },
+            },
+            resetByChannel: {
+              telegram: { mode: "off" },
+            },
+            resetTriggers: ["/new", "/reset", "/fresh"],
+            greetingPrompt: "hello reset",
+          },
+        },
+      }),
+    );
+
+    const runtime = await createGatewayRuntime({
+      FLINT_GATEWAY_USER_SETTINGS_PATH: userPath,
+      FLINT_GATEWAY_STORE_PATH: storePath,
+    });
+
+    expect(runtime.sessionLifecycle.defaultPolicy).toEqual({
+      dailyAtHour: 5,
+      idleMinutes: 180,
+    });
+    expect(runtime.sessionLifecycle.resetByType.direct).toEqual({
+      idleMinutes: 45,
+    });
+    expect(runtime.sessionLifecycle.resetByChannel.telegram).toEqual({});
+    expect(runtime.sessionLifecycle.resetTriggers).toEqual(["/new", "/reset", "/fresh"]);
+    expect(runtime.sessionLifecycle.greetingPrompt).toBe("hello reset");
+
+    await runtime.gateway.close();
+  });
 });
 
 describe("memory system prompt append", () => {
@@ -242,6 +291,156 @@ describe("memory system prompt append", () => {
     expect(refreshedPromptAppend).toContain("The user now prefers detailed updates.");
 
     await runtime.gateway.close();
+  });
+});
+
+describe("FlintGateway session fallback behavior", () => {
+  test("falls back to default model when /new requests an unsupported model", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "flint-gateway-model-fallback-"));
+    const storePath = join(dir, "threads.json");
+
+    const gateway = new FlintGateway({
+      cwd: dir,
+      defaultRoutingMode: "per-peer",
+      defaultProvider: "claude",
+      model: "claude-default",
+      storePath,
+      identityLinks: {},
+      mcpProfiles: {},
+      defaultMcpProfileIds: [],
+      sessionLifecycle: resolveSessionLifecycleConfig(undefined),
+    });
+    await gateway.start();
+
+    const internals = gateway as unknown as {
+      ensureThreadRuntime: (
+        message: InboundMessage,
+        routingMode: string,
+        threadId: string,
+        options?: {
+          forceNewSession?: boolean;
+          providerOverride?: string;
+          modelOverride?: string;
+          forceDefaultModel?: boolean;
+        },
+      ) => Promise<{
+        client: unknown;
+        providerThreadId: string;
+        provider: string;
+        model?: string;
+        mcpProfileIds: string[];
+      }>;
+      runTurn: (client: unknown, inputText: string, model: string | undefined) => Promise<string>;
+      resetRuntimeForFreshSession: (threadId: string) => Promise<void>;
+    };
+
+    const ensureCalls: Array<Record<string, unknown> | undefined> = [];
+    let ensureCount = 0;
+    internals.ensureThreadRuntime = async (_message, _routingMode, _threadId, options) => {
+      ensureCount += 1;
+      ensureCalls.push(options as Record<string, unknown> | undefined);
+      if (ensureCount === 1) {
+        return {
+          client: {},
+          providerThreadId: "provider-thread-1",
+          provider: "claude",
+          model: "gpt-5-mini",
+          mcpProfileIds: [],
+        };
+      }
+      return {
+        client: {},
+        providerThreadId: "provider-thread-2",
+        provider: "claude",
+        model: "claude-default",
+        mcpProfileIds: [],
+      };
+    };
+
+    let runCount = 0;
+    internals.runTurn = async (_client, _inputText, model) => {
+      runCount += 1;
+      if (runCount === 1) {
+        throw new Error("The 'gpt-5-mini' model is not supported by provider claude.");
+      }
+      return model === "claude-default" ? "FALLBACK_OK" : "UNEXPECTED_MODEL";
+    };
+
+    const resetCalls: string[] = [];
+    internals.resetRuntimeForFreshSession = async (threadId) => {
+      resetCalls.push(threadId);
+    };
+
+    const result = await gateway.handleMessage({
+      channel: "tui",
+      userId: "u1",
+      text: "/new gpt-5-mini Reply exactly FALLBACK_OK",
+    });
+
+    expect(result.reply).toContain('Warning: Model "gpt-5-mini" is unavailable');
+    expect(result.reply).toContain("FALLBACK_OK");
+    expect(ensureCalls[0]?.modelOverride).toBe("gpt-5-mini");
+    expect(ensureCalls[1]?.forceDefaultModel).toBe(true);
+    expect(ensureCalls[1]?.modelOverride).toBeUndefined();
+    expect(resetCalls).toEqual(["agent:main:direct:u1", "agent:main:direct:u1"]);
+    expect(gateway.getThread("agent:main:direct:u1")?.model).toBe("claude-default");
+
+    await gateway.close();
+  });
+
+  test("does not fallback when error does not reference requested model", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "flint-gateway-model-fallback-"));
+    const storePath = join(dir, "threads.json");
+
+    const gateway = new FlintGateway({
+      cwd: dir,
+      defaultRoutingMode: "per-peer",
+      defaultProvider: "claude",
+      model: "claude-default",
+      storePath,
+      identityLinks: {},
+      mcpProfiles: {},
+      defaultMcpProfileIds: [],
+      sessionLifecycle: resolveSessionLifecycleConfig(undefined),
+    });
+    await gateway.start();
+
+    const internals = gateway as unknown as {
+      ensureThreadRuntime: (
+        message: InboundMessage,
+        routingMode: string,
+        threadId: string,
+        options?: { modelOverride?: string },
+      ) => Promise<{
+        client: unknown;
+        providerThreadId: string;
+        provider: string;
+        model?: string;
+        mcpProfileIds: string[];
+      }>;
+      runTurn: (client: unknown, inputText: string, model: string | undefined) => Promise<string>;
+    };
+
+    internals.ensureThreadRuntime = async () => ({
+      client: {},
+      providerThreadId: "provider-thread-1",
+      provider: "claude",
+      model: "gpt-5-mini",
+      mcpProfileIds: [],
+    });
+    internals.runTurn = async () => {
+      throw new Error("Model is not supported.");
+    };
+
+    await expect(
+      gateway.handleMessage({
+        channel: "tui",
+        userId: "u1",
+        text: "/new gpt-5-mini hello",
+      }),
+    ).rejects.toThrow("Model is not supported.");
+
+    await gateway.close();
   });
 });
 
@@ -510,5 +709,4 @@ describe("createGatewayApp", () => {
     expect(followUpBody).toContain("event: text");
     expect(followUpBody).toContain("event: result");
   });
-
 });

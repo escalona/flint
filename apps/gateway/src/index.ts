@@ -11,6 +11,14 @@ import {
   buildMemorySystemPromptSection,
   loadMemoryRootFile,
 } from "./memory.ts";
+import {
+  parseResetCommand,
+  resolveSessionLifecycleConfig,
+  resolveSessionResetPolicy,
+  resolveSessionType,
+  evaluateSessionReset,
+  type ResolvedSessionLifecycleConfig,
+} from "./session-lifecycle.ts";
 import { composeSystemPromptAppend } from "./system-context.ts";
 
 export type RoutingMode = "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
@@ -21,6 +29,7 @@ const ESCAPED_ENV_VAR_REF_REGEX = /\$\$\{([A-Z_][A-Z0-9_]*)\}/g;
 const ESCAPED_ENV_VAR_SENTINEL = "__FLINT_ESCAPED_ENV_VAR__";
 const MEMORY_MCP_DEFAULT_ALIAS = "flint_memory";
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 120;
+const BUILTIN_PROVIDER_HINTS = ["claude", "pi", "codex"];
 
 interface McpProfileDefinition {
   profiles?: string[];
@@ -31,6 +40,7 @@ interface GatewaySettings {
   gateway?: {
     mcpProfiles?: Record<string, McpProfileDefinition>;
     defaultMcpProfileIds?: string[];
+    session?: unknown;
   };
 }
 
@@ -54,6 +64,7 @@ export interface ThreadRecord {
   routingMode: RoutingMode;
   provider: string;
   providerThreadId: string;
+  model?: string;
   mcpProfileIds?: string[];
   channel: string;
   userId: string;
@@ -74,6 +85,7 @@ interface ThreadRuntime {
   client: AppServerClient;
   providerThreadId: string;
   provider: string;
+  model?: string;
   mcpProfileIds: string[];
 }
 
@@ -92,6 +104,7 @@ export interface GatewayOptions {
   mcpProfiles: Record<string, McpProfileDefinition>;
   defaultMcpProfileIds: string[];
   memoryMcpServer?: GatewayMemoryMcpServer;
+  sessionLifecycle: ResolvedSessionLifecycleConfig;
 }
 
 export interface GatewayReply {
@@ -336,10 +349,64 @@ export class FlintGateway {
     onEvent?: (event: AgentEvent) => Promise<void>,
   ): Promise<GatewayReply> {
     return this.queue.enqueue(threadId, async () => {
-      const runtime = await this.ensureThreadRuntime(message, routingMode, threadId);
-      const reply = await this.runTurn(runtime.client, message.text, onEvent);
-      const now = new Date().toISOString();
       const existing = this.store.get(threadId);
+      const command = parseResetCommand({
+        text: message.text,
+        resetTriggers: this.options.sessionLifecycle.resetTriggers,
+        greetingPrompt: this.options.sessionLifecycle.greetingPrompt,
+        providerHints: this.resolveProviderHints(existing, message),
+      });
+
+      let resetReason: string | undefined;
+      if (command.triggered) {
+        resetReason = `trigger:${command.trigger ?? "unknown"}`;
+      } else if (existing) {
+        const sessionType = resolveSessionType({
+          chatType: normalizeChatType(message.chatType ?? existing.chatType),
+          channelThreadId: message.channelThreadId ?? existing.channelThreadId,
+        });
+        const policy = resolveSessionResetPolicy(this.options.sessionLifecycle, {
+          sessionType,
+          channel: normalizeToken(message.channel) || existing.channel,
+        });
+        const resetCheck = evaluateSessionReset(existing.updatedAt, Date.now(), policy);
+        if (resetCheck.expired) {
+          resetReason = `${resetCheck.reason ?? "daily"}_expiry`;
+        }
+      }
+
+      if (resetReason) {
+        await this.resetRuntimeForFreshSession(threadId);
+      }
+
+      let runtime: ThreadRuntime;
+      let reply: string;
+      let fallbackWarning: string | undefined;
+      try {
+        runtime = await this.ensureThreadRuntime(message, routingMode, threadId, {
+          forceNewSession: Boolean(resetReason),
+          providerOverride: command.providerOverride,
+          modelOverride: command.modelOverride,
+        });
+        reply = await this.runTurn(runtime.client, command.nextText, runtime.model, onEvent);
+      } catch (error) {
+        if (!this.shouldFallbackToDefaultModel(error, command.modelOverride ?? existing?.model)) {
+          throw error;
+        }
+        await this.resetRuntimeForFreshSession(threadId);
+        runtime = await this.ensureThreadRuntime(message, routingMode, threadId, {
+          forceNewSession: true,
+          providerOverride: command.providerOverride,
+          forceDefaultModel: true,
+        });
+        reply = await this.runTurn(runtime.client, command.nextText, runtime.model, onEvent);
+        fallbackWarning = this.buildModelFallbackWarning(
+          command.modelOverride ?? existing?.model ?? "requested model",
+          runtime.provider,
+        );
+      }
+      const replyWithWarning = fallbackWarning ? `${fallbackWarning}\n\n${reply}` : reply;
+      const now = new Date().toISOString();
       const chatType = normalizeChatType(message.chatType);
       const peerId = resolvePeerId(message);
       const accountId = normalizeOptionalToken(message.accountId);
@@ -349,6 +416,7 @@ export class FlintGateway {
         routingMode,
         provider: runtime.provider,
         providerThreadId: runtime.providerThreadId,
+        ...(runtime.model && { model: runtime.model }),
         ...(runtime.mcpProfileIds.length > 0 && { mcpProfileIds: runtime.mcpProfileIds }),
         channel: normalizeToken(message.channel) || "unknown",
         userId: message.userId.trim(),
@@ -357,7 +425,7 @@ export class FlintGateway {
         ...(accountId && { accountId }),
         ...(message.identityId && { identityId: message.identityId.trim() }),
         ...(message.channelThreadId && { channelThreadId: message.channelThreadId.trim() }),
-        createdAt: existing?.createdAt ?? now,
+        createdAt: resetReason ? now : (existing?.createdAt ?? now),
         updatedAt: now,
       });
 
@@ -365,7 +433,7 @@ export class FlintGateway {
         threadId,
         routingMode,
         provider: runtime.provider,
-        reply,
+        reply: replyWithWarning,
       };
     });
   }
@@ -374,23 +442,41 @@ export class FlintGateway {
     message: InboundMessage,
     routingMode: RoutingMode,
     threadId: string,
+    options?: {
+      forceNewSession?: boolean;
+      providerOverride?: string;
+      modelOverride?: string;
+      forceDefaultModel?: boolean;
+    },
   ): Promise<ThreadRuntime> {
+    const forceNewSession = options?.forceNewSession ?? false;
     const record = this.store.get(threadId);
+    const providerOverride = normalizeToken(options?.providerOverride);
+    const requestedProvider = normalizeToken(message.provider);
+    const recordProvider = normalizeToken(record?.provider);
+    const provider =
+      providerOverride ||
+      recordProvider ||
+      requestedProvider ||
+      normalizeToken(this.options.defaultProvider) ||
+      "claude";
+    const requestedModel = options?.forceDefaultModel
+      ? this.options.model
+      : options?.modelOverride?.trim() || record?.model || this.options.model;
     const requestedMcpProfileIds = normalizeMcpProfileIds(
       message.mcpProfileIds ?? record?.mcpProfileIds ?? this.options.defaultMcpProfileIds,
     );
     const existingRuntime = this.runtimes.get(threadId);
     if (existingRuntime) {
-      if (
-        message.provider &&
-        normalizeToken(message.provider) &&
-        normalizeToken(message.provider) !== normalizeToken(existingRuntime.provider)
-      ) {
+      if (forceNewSession) {
+        existingRuntime.client.close();
+        this.runtimes.delete(threadId);
+      } else if (provider !== normalizeToken(existingRuntime.provider)) {
         console.warn(
-          `[gateway] provider mismatch for ${threadId}: requested=${message.provider}, active=${existingRuntime.provider}; keeping active runtime`,
+          `[gateway] provider mismatch for ${threadId}: requested=${provider}, active=${existingRuntime.provider}; keeping active runtime`,
         );
-      }
-      if (!mcpProfileIdsEqual(requestedMcpProfileIds, existingRuntime.mcpProfileIds)) {
+        return existingRuntime;
+      } else if (!mcpProfileIdsEqual(requestedMcpProfileIds, existingRuntime.mcpProfileIds)) {
         console.warn(`[gateway] mcp profile mismatch for ${threadId}; recycling runtime`);
         existingRuntime.client.close();
         this.runtimes.delete(threadId);
@@ -399,9 +485,6 @@ export class FlintGateway {
       }
     }
 
-    const requestedProvider =
-      normalizeToken(message.provider) || normalizeToken(this.options.defaultProvider);
-    const provider = normalizeToken(record?.provider) || requestedProvider || "claude";
     const profileMcpServers = resolveMcpServersFromProfiles(
       requestedMcpProfileIds,
       this.options.mcpProfiles,
@@ -420,10 +503,11 @@ export class FlintGateway {
     const systemPromptAppend = await this.resolveSystemPromptAppend();
 
     let providerThreadId: string;
-    if (record?.providerThreadId) {
+    if (record?.providerThreadId && !forceNewSession) {
       try {
         providerThreadId = await client.resumeThread(record.providerThreadId, {
           cwd: this.options.cwd,
+          ...(requestedModel && { model: requestedModel }),
           ...(systemPromptAppend && { systemPromptAppend }),
           ...(requestedMcpServers && { mcpServers: requestedMcpServers }),
         });
@@ -432,14 +516,14 @@ export class FlintGateway {
           `[gateway] failed to resume provider thread ${record.providerThreadId} for ${threadId}: ${formatError(error)}; creating a new thread`,
         );
         providerThreadId = await client.createThread({
-          ...(this.options.model && { model: this.options.model }),
+          ...(requestedModel && { model: requestedModel }),
           ...(systemPromptAppend && { systemPromptAppend }),
           ...(requestedMcpServers && { mcpServers: requestedMcpServers }),
         });
       }
     } else {
       providerThreadId = await client.createThread({
-        ...(this.options.model && { model: this.options.model }),
+        ...(requestedModel && { model: requestedModel }),
         ...(systemPromptAppend && { systemPromptAppend }),
         ...(requestedMcpServers && { mcpServers: requestedMcpServers }),
       });
@@ -453,6 +537,7 @@ export class FlintGateway {
         routingMode,
         provider,
         providerThreadId,
+        ...(requestedModel && { model: requestedModel }),
         ...(requestedMcpProfileIds.length > 0 && { mcpProfileIds: requestedMcpProfileIds }),
         channel: normalizeToken(message.channel) || "unknown",
         userId: message.userId.trim(),
@@ -466,7 +551,13 @@ export class FlintGateway {
       });
     }
 
-    const runtime = { client, providerThreadId, provider, mcpProfileIds: requestedMcpProfileIds };
+    const runtime = {
+      client,
+      providerThreadId,
+      provider,
+      ...(requestedModel && { model: requestedModel }),
+      mcpProfileIds: requestedMcpProfileIds,
+    };
     this.runtimes.set(threadId, runtime);
     return runtime;
   }
@@ -481,9 +572,10 @@ export class FlintGateway {
   private async runTurn(
     client: AppServerClient,
     inputText: string,
+    model: string | undefined,
     onEvent?: (event: AgentEvent) => Promise<void>,
   ): Promise<string> {
-    const promptOptions = this.options.model ? { model: this.options.model } : undefined;
+    const promptOptions = model ? { model } : undefined;
     let responseText = "";
     let terminalError: string | null = null;
 
@@ -507,6 +599,54 @@ export class FlintGateway {
     }
 
     return responseText.trim() || "(no response)";
+  }
+
+  private resolveProviderHints(
+    record: ThreadRecord | undefined,
+    message: InboundMessage,
+  ): string[] {
+    const hints = new Set<string>(BUILTIN_PROVIDER_HINTS);
+    if (this.options.defaultProvider) hints.add(this.options.defaultProvider);
+    if (record?.provider) hints.add(record.provider);
+    if (message.provider) hints.add(message.provider);
+    return Array.from(hints);
+  }
+
+  private async resetRuntimeForFreshSession(threadId: string): Promise<void> {
+    const runtime = this.runtimes.get(threadId);
+    if (!runtime) return;
+    runtime.client.close();
+    this.runtimes.delete(threadId);
+  }
+
+  private shouldFallbackToDefaultModel(error: unknown, requestedModel: string | undefined): boolean {
+    const requested = requestedModel?.trim().toLowerCase();
+    const defaultModel = this.options.model?.trim().toLowerCase();
+    if (!requested) {
+      return false;
+    }
+    if (requested === defaultModel) {
+      return false;
+    }
+    return this.isInvalidModelError(error, requested);
+  }
+
+  private isInvalidModelError(error: unknown, requestedModel: string): boolean {
+    const message = formatError(error).toLowerCase();
+    if (!message.includes(requestedModel)) {
+      return false;
+    }
+    return (
+      message.includes("model") &&
+      (message.includes("not supported") ||
+        message.includes("unsupported") ||
+        message.includes("unknown model") ||
+        message.includes("invalid model"))
+    );
+  }
+
+  private buildModelFallbackWarning(requestedModel: string, provider: string): string {
+    return `Warning: Model "${requestedModel}" is unavailable for provider "${provider}". Using the default model instead.`;
   }
 }
 
@@ -1323,6 +1463,7 @@ export interface GatewayRuntime {
   idleTimeoutSeconds: number;
   mcpProfileCount: number;
   memoryEnabled: boolean;
+  sessionLifecycle: ResolvedSessionLifecycleConfig;
 }
 
 export async function createGatewayRuntime(
@@ -1348,6 +1489,7 @@ export async function createGatewayRuntime(
   const settings = await readGatewaySettings(env);
   const mcpProfiles = parseMcpProfilesFromSettings(settings, env);
   const defaultMcpProfileIds = parseDefaultMcpProfileIdsFromSettings(settings, mcpProfiles);
+  const sessionLifecycle = resolveSessionLifecycleConfig(settings.gateway?.session);
   const memoryWorkspaceDir = resolve(cwd);
   const memoryMcpServer = memoryEnabled ? createMemoryMcpServer(memoryWorkspaceDir) : undefined;
 
@@ -1361,6 +1503,7 @@ export async function createGatewayRuntime(
     mcpProfiles,
     defaultMcpProfileIds,
     memoryMcpServer,
+    sessionLifecycle,
   });
   await gateway.start();
 
@@ -1393,6 +1536,7 @@ export async function createGatewayRuntime(
     idleTimeoutSeconds,
     mcpProfileCount: Object.keys(mcpProfiles).length,
     memoryEnabled,
+    sessionLifecycle,
   };
 }
 
@@ -1464,6 +1608,18 @@ export async function startGatewayServer(
   console.log(`[gateway] idle timeout sec: ${runtime.idleTimeoutSeconds}`);
   console.log(`[gateway] mcp profiles: ${runtime.mcpProfileCount}`);
   console.log(`[gateway] memory: ${runtime.memoryEnabled ? "enabled" : "disabled"}`);
+  const defaultPolicy = runtime.sessionLifecycle.defaultPolicy;
+  const resetParts: string[] = [];
+  if (defaultPolicy.dailyAtHour !== undefined) {
+    resetParts.push(`daily@${defaultPolicy.dailyAtHour}:00`);
+  }
+  if (defaultPolicy.idleMinutes !== undefined) {
+    resetParts.push(`idle=${defaultPolicy.idleMinutes}m`);
+  }
+  if (resetParts.length === 0) {
+    resetParts.push("off");
+  }
+  console.log(`[gateway] session reset: ${resetParts.join(", ")}`);
 
   const shutdown = async (signal: string, exitProcess = false) => {
     console.log(`\n[gateway] received ${signal}, shutting down`);
@@ -1523,6 +1679,7 @@ function printHelp(): void {
   console.log(
     "  FLINT_GATEWAY_USER_SETTINGS_PATH   Settings file path (default: ~/.flint/settings.json)",
   );
+  console.log("                                     gateway.session.* controls reset lifecycle");
   console.log("  FLINT_GATEWAY_IDENTITY_LINKS       JSON map for cross-channel identity linking");
   console.log("  SLACK_BOT_TOKEN                    Slack bot token (enables Slack adapter)");
   console.log("  SLACK_SIGNING_SECRET               Slack webhook verification secret");

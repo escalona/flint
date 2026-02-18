@@ -10,6 +10,8 @@ HTTP gateway prototype for routing normalized channel messages into Flint app se
 - Persists thread records to disk (`~/.flint/gateway/threads.json`)
 - Uses `@flint-dev/sdk` providers (`claude`, `pi`, `codex`, or registered custom providers)
 - Supports idempotency keys with in-flight dedupe and replay cache
+- Applies session lifecycle policies (daily reset, optional idle reset, per-type/per-channel overrides)
+- Supports in-band reset triggers (`/new`, `/reset`, plus configured extras)
 - Appends memory recall guidance and `MEMORY.md`/`memory.md` contents to provider system/developer instructions
 - Exposes model-callable memory MCP tools (`memory_search`, `memory_get`)
 
@@ -90,6 +92,8 @@ Gateway resolves `mcpProfileIds` to server-side MCP configs and forwards those t
 When memory is enabled, gateway also injects a built-in stdio MCP server that exposes `memory_search` and `memory_get`.
 When memory is enabled, gateway also loads root memory context from `MEMORY.md` (fallback `memory.md`) and appends it to provider system/developer instructions.
 When `mcpProfileIds` is omitted in a request, gateway falls back to `gateway.defaultMcpProfileIds` from settings.
+If message text starts with exact `/new` or `/reset` (or configured `gateway.session.resetTriggers`), the gateway starts a fresh provider session and forwards the remaining text. `/new <model-or-provider>` updates the next session model/provider before running the next turn. A bare reset command runs a short greeting turn.
+Gateway does not run a memory-flush turn on `/new` or `/reset`.
 
 ### `settings.json` example
 
@@ -112,10 +116,42 @@ When `mcpProfileIds` is omitted in a request, gateway falls back to `gateway.def
       "support-stack": {
         "profiles": ["linear-readonly"]
       }
+    },
+    "session": {
+      "reset": {
+        "mode": "daily",
+        "atHour": 4,
+        "idleMinutes": 120
+      },
+      "resetByType": {
+        "direct": {
+          "mode": "idle",
+          "idleMinutes": 240
+        },
+        "thread": {
+          "mode": "daily",
+          "atHour": 4
+        }
+      },
+      "resetByChannel": {
+        "discord": {
+          "mode": "idle",
+          "idleMinutes": 10080
+        }
+      },
+      "resetTriggers": ["/new", "/reset"],
+      "greetingPrompt": "This session was reset. Greet briefly and ask what to work on next."
     }
   }
 }
 ```
+
+Session lifecycle defaults:
+
+- Default reset policy is daily at 4:00 AM (gateway host local time).
+- If only `gateway.session.idleMinutes` is set (without `reset`/`resetByType`/`resetByChannel`), gateway uses legacy idle-only mode.
+- When both daily and idle are configured, whichever expires first forces a fresh provider session.
+- Channel overrides (`resetByChannel`) take precedence over type overrides (`resetByType`) and base `reset`.
 
 Config loading:
 
