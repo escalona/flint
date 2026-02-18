@@ -1,10 +1,13 @@
 import type { InboundMessage } from "./contracts.ts";
-import type { ChannelAdapter, WebhookMeta } from "./types.ts";
+import type { AgentEvent, ChannelAdapter, WebhookMeta } from "./types.ts";
 
 const DEDUP_TTL_MS = 5 * 60 * 1000;
 
 export interface MessageGateway {
-  handleMessage(message: InboundMessage): Promise<{ reply: string }>;
+  handleMessage(
+    message: InboundMessage,
+    onEvent?: (event: AgentEvent) => Promise<void>,
+  ): Promise<{ reply: string }>;
 }
 
 export function createWebhookHandler(
@@ -29,11 +32,24 @@ export function createWebhookHandler(
       console.warn(`[channels/${adapter.channel}] acknowledge failed:`, error);
     }
 
+    const onEvent = adapter.onAgentEvent
+      ? (event: AgentEvent) => adapter.onAgentEvent!(meta, event)
+      : undefined;
+
     try {
-      const result = await gateway.handleMessage(message);
+      const result = await gateway.handleMessage(message, onEvent);
       await adapter.deliverReply(meta, result.reply);
     } catch (error) {
       console.error(`[channels/${adapter.channel}] process failed:`, error);
+      try {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        await adapter.deliverReply(
+          meta,
+          `Sorry, I hit an error while processing your request:\n\`\`\`${errorMessage}\`\`\``,
+        );
+      } catch (replyError) {
+        console.error(`[channels/${adapter.channel}] error reply failed:`, replyError);
+      }
     }
   }
 

@@ -1,5 +1,5 @@
 import type { InboundMessage } from "./contracts.ts";
-import type { ChannelAdapter, WebhookMeta } from "./types.ts";
+import type { AgentEvent, ChannelAdapter, WebhookMeta } from "./types.ts";
 
 export interface SlackAdapterOptions {
   botToken: string;
@@ -32,11 +32,38 @@ interface SlackEventPayload {
   };
 }
 
+/** Friendly labels for tool names shown in the status message. */
+const TOOL_LABELS: Record<string, string> = {
+  mcp__axiom__queryApl: "Querying Axiom",
+  mcp__axiom__listDatasets: "Listing Axiom datasets",
+  mcp__axiom__getDatasetInfo: "Inspecting dataset",
+  Bash: "Running command",
+  Read: "Reading file",
+  Glob: "Searching files",
+  Grep: "Searching code",
+  Edit: "Editing file",
+  Write: "Writing file",
+  WebFetch: "Fetching URL",
+  WebSearch: "Searching the web",
+};
+
+function toolLabel(name: string): string {
+  if (TOOL_LABELS[name]) return TOOL_LABELS[name];
+  if (name.startsWith("mcp__axiom__")) return "Querying Axiom";
+  if (name.startsWith("mcp__")) return `Using ${name.split("__")[1]}`;
+  return `Running ${name}`;
+}
+
+/** Minimum interval between status message updates to avoid rate limits. */
+const STATUS_UPDATE_INTERVAL_MS = 2_000;
+
 export class SlackAdapter implements ChannelAdapter {
   readonly channel = "slack";
   private readonly botToken: string;
   private readonly signingSecret: string;
   private readonly botUserId: string | undefined;
+  /** Track status message ts per event so we can update/delete it. */
+  private readonly statusMessages = new Map<string, { ts: string; lastUpdate: number }>();
 
   constructor(options: SlackAdapterOptions) {
     this.botToken = options.botToken;
@@ -154,21 +181,72 @@ export class SlackAdapter implements ChannelAdapter {
   }
 
   async acknowledge(meta: WebhookMeta): Promise<void> {
+    const channelId = meta["channelId"] as string;
+    const threadTs = meta["threadTs"] as string;
+
+    // Post an initial status message instead of a reaction
     try {
-      await this.slackApi("reactions.add", {
-        channel: meta["channelId"] as string,
-        timestamp: meta["messageTs"] as string,
-        name: "eyes",
-      });
+      const result = (await this.slackApi("chat.postMessage", {
+        channel: channelId,
+        text: ":hourglass_flowing_sand: Thinking...",
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+      })) as { ts?: string };
+
+      if (result.ts) {
+        this.statusMessages.set(meta.eventId, { ts: result.ts, lastUpdate: Date.now() });
+      }
     } catch (error) {
-      console.warn("[channels/slack] reactions.add failed:", error);
+      console.warn("[channels/slack] status message post failed:", error);
+    }
+  }
+
+  async onAgentEvent(meta: WebhookMeta, event: AgentEvent): Promise<void> {
+    if (event.type !== "tool_start") return;
+
+    const status = this.statusMessages.get(meta.eventId);
+    if (!status) return;
+
+    // Throttle updates to avoid Slack rate limits
+    const now = Date.now();
+    if (now - status.lastUpdate < STATUS_UPDATE_INTERVAL_MS) return;
+
+    const label = toolLabel(event.name);
+    try {
+      await this.slackApi("chat.update", {
+        channel: meta["channelId"] as string,
+        ts: status.ts,
+        text: `:hourglass_flowing_sand: ${label}...`,
+      });
+      status.lastUpdate = now;
+    } catch (error) {
+      console.warn("[channels/slack] status update failed:", error);
     }
   }
 
   async deliverReply(meta: WebhookMeta, reply: string): Promise<void> {
+    const channelId = meta["channelId"] as string;
     const threadTs = meta["threadTs"] as string;
+    const status = this.statusMessages.get(meta.eventId);
+
+    if (status) {
+      // Replace the status message with the final reply
+      try {
+        await this.slackApi("chat.update", {
+          channel: channelId,
+          ts: status.ts,
+          text: reply,
+        });
+        this.statusMessages.delete(meta.eventId);
+        return;
+      } catch (error) {
+        console.warn("[channels/slack] status→reply update failed, posting new message:", error);
+        this.statusMessages.delete(meta.eventId);
+      }
+    }
+
+    // Fallback: post a new message
     await this.slackApi("chat.postMessage", {
-      channel: meta["channelId"] as string,
+      channel: channelId,
       text: reply,
       ...(threadTs ? { thread_ts: threadTs } : {}),
     });
@@ -183,7 +261,7 @@ export class SlackAdapter implements ChannelAdapter {
       },
       body: JSON.stringify(body),
     });
-    const data = (await response.json()) as { ok: boolean; error?: string };
+    const data = (await response.json()) as { ok: boolean; error?: string; ts?: string };
     if (!data.ok) {
       throw new Error(`Slack API ${method} failed: ${data.error ?? "unknown error"}`);
     }
