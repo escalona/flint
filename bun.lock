@@ -26,7 +26,7 @@
     },
     "apps/gateway": {
       "name": "@flint-dev/gateway",
-      "version": "0.2.3",
+      "version": "0.2.5",
       "bin": {
         "flint-gateway": "bin/flint-gateway.js",
       },
@@ -40,7 +40,7 @@
     },
     "apps/tui": {
       "name": "@flint-dev/tui",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "bin": {
         "flint-tui": "bin/flint-tui.js",
       },
@@ -53,7 +53,7 @@
     },
     "packages/app-server-core": {
       "name": "@flint-dev/app-server-core",
-      "version": "0.2.1",
+      "version": "0.2.2",
     },
     "packages/channels": {
       "name": "@flint-dev/channels",
@@ -61,18 +61,18 @@
     },
     "packages/claude-app-server": {
       "name": "@flint-dev/claude-app-server",
-      "version": "0.2.2",
+      "version": "0.2.4",
       "bin": {
         "claude-app-server": "./bin/claude-app-server.js",
       },
       "dependencies": {
-        "@anthropic-ai/claude-agent-sdk": "^0.2.38",
+        "@anthropic-ai/claude-agent-sdk": "^0.2.45",
         "@flint-dev/app-server-core": "^0.2.1",
       },
     },
     "packages/flint": {
       "name": "@flint-dev/cli",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "bin": {
         "flint": "bin/flint.js",
       },
@@ -85,7 +85,7 @@
     },
     "packages/pi-app-server": {
       "name": "@flint-dev/pi-app-server",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "bin": {
         "pi-app-server": "./bin/pi-app-server.js",
       },
@@ -95,7 +95,7 @@
     },
     "packages/sdk": {
       "name": "@flint-dev/sdk",
-      "version": "0.2.1",
+      "version": "0.2.3",
       "peerDependencies": {
         "@flint-dev/claude-app-server": "^0.2.0",
         "@flint-dev/pi-app-server": "^0.2.0",
@@ -107,7 +107,7 @@
     },
   },
   "packages": {
-    "@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.2.38", "", { "optionalDependencies": { "@img/sharp-darwin-arm64": "^0.33.5", "@img/sharp-darwin-x64": "^0.33.5", "@img/sharp-linux-arm": "^0.33.5", "@img/sharp-linux-arm64": "^0.33.5", "@img/sharp-linux-x64": "^0.33.5", "@img/sharp-linuxmusl-arm64": "^0.33.5", "@img/sharp-linuxmusl-x64": "^0.33.5", "@img/sharp-win32-x64": "^0.33.5" }, "peerDependencies": { "zod": "^4.0.0" } }, "sha512-U1vpf3rlSkw1qUlzC6CBibBA30ouQnla9JnuqYFLQ2zBb1U2NUCXIElrnV7RwWrI5e9ZKCHgR+1uaCwROONo7w=="],
+    "@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.2.45", "", { "optionalDependencies": { "@img/sharp-darwin-arm64": "^0.33.5", "@img/sharp-darwin-x64": "^0.33.5", "@img/sharp-linux-arm": "^0.33.5", "@img/sharp-linux-arm64": "^0.33.5", "@img/sharp-linux-x64": "^0.33.5", "@img/sharp-linuxmusl-arm64": "^0.33.5", "@img/sharp-linuxmusl-x64": "^0.33.5", "@img/sharp-win32-x64": "^0.33.5" }, "peerDependencies": { "zod": "^4.0.0" } }, "sha512-AKH2hKoJNyjLf9ThAttKqbmCjUFg7qs/8+LR/UTVX20fCLn359YH9WrQc6dAiAfi8RYNA+mWwrNYCAq+Sdo5Ag=="],
 
     "@cloudflare/containers": ["@cloudflare/containers@0.0.30", "", {}, "sha512-i148xBgmyn/pje82ZIyuTr/Ae0BT/YWwa1/GTJcw6DxEjUHAzZLaBCiX446U9OeuJ2rBh/L/9FIzxX5iYNt1AQ=="],
 
