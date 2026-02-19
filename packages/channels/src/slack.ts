@@ -1,4 +1,5 @@
 import type { InboundMessage } from "./contracts.ts";
+import { markdownToMrkdwn } from "./markdown-to-mrkdwn.ts";
 import type { AgentEvent, ChannelAdapter, WebhookMeta } from "./types.ts";
 
 export interface SlackAdapterOptions {
@@ -227,6 +228,7 @@ export class SlackAdapter implements ChannelAdapter {
     const channelId = meta["channelId"] as string;
     const threadTs = meta["threadTs"] as string;
     const status = this.statusMessages.get(meta.eventId);
+    const formatted = markdownToMrkdwn(reply);
 
     if (status) {
       // Replace the status message with the final reply
@@ -234,7 +236,7 @@ export class SlackAdapter implements ChannelAdapter {
         await this.slackApi("chat.update", {
           channel: channelId,
           ts: status.ts,
-          text: reply,
+          text: formatted,
         });
         this.statusMessages.delete(meta.eventId);
         return;
@@ -247,7 +249,7 @@ export class SlackAdapter implements ChannelAdapter {
     // Fallback: post a new message
     await this.slackApi("chat.postMessage", {
       channel: channelId,
-      text: reply,
+      text: formatted,
       ...(threadTs ? { thread_ts: threadTs } : {}),
     });
   }
