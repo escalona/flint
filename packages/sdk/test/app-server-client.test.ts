@@ -26,6 +26,8 @@ describe("AppServerClient thread parameter mapping", () => {
       model: "gpt-5-codex",
       systemPrompt: "Base instructions override",
       systemPromptAppend: "Memory instructions append",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
       mcpServers: {
         flint_memory: {
           type: "stdio",
@@ -42,6 +44,8 @@ describe("AppServerClient thread parameter mapping", () => {
       model: "gpt-5-codex",
       baseInstructions: "Base instructions override",
       developerInstructions: "Memory instructions append",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
       config: {
         "mcp_servers.flint_memory.command": "bun",
         "mcp_servers.flint_memory.args": ["memory-mcp.ts"],
@@ -84,6 +88,8 @@ describe("AppServerClient thread parameter mapping", () => {
     await client.resumeThread("thread-abc", {
       cwd: "/tmp/project",
       systemPromptAppend: "Memory instructions append",
+      approvalPolicy: "never",
+      sandboxMode: "danger-full-access",
       mcpServers: {
         flint_memory: {
           type: "stdio",
@@ -99,10 +105,26 @@ describe("AppServerClient thread parameter mapping", () => {
       threadId: "thread-abc",
       cwd: "/tmp/project",
       developerInstructions: "Memory instructions append",
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
       config: {
         "mcp_servers.flint_memory.command": "bun",
         "mcp_servers.flint_memory.args": ["memory-mcp.ts"],
       },
+    });
+  });
+
+  test("ignores codex execution overrides for non-codex providers", async () => {
+    const { client, calls } = createHarness("claude");
+    await client.createThread({
+      approvalPolicy: "never",
+      sandboxMode: "danger-full-access",
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("thread/start");
+    expect(calls[0]?.params).toEqual({
+      cwd: process.cwd(),
     });
   });
 

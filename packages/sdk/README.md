@@ -153,8 +153,13 @@ Creates a new conversation thread. Returns the thread ID.
 ```ts
 interface CreateThreadOptions {
   model?: string;
+  // Codex-only
+  approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
+  sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
 }
 ```
+
+For provider `"codex"`, these map to app-server `thread/start` as `approvalPolicy` and `sandbox`.
 
 #### `client.prompt(text, options?): AsyncGenerator<AgentEvent>`
 

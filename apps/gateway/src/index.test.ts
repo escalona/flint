@@ -215,6 +215,91 @@ describe("MCP settings", () => {
     await configuredRuntime.gateway.close();
   });
 
+  test("uses default codex execution policy when not configured", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "flint-gateway-codex-defaults-"));
+    const storePath = join(dir, "threads.json");
+
+    const runtime = await createGatewayRuntime({
+      FLINT_GATEWAY_CWD: dir,
+      FLINT_GATEWAY_STORE_PATH: storePath,
+    });
+    expect(runtime.codexExecution).toEqual({
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    });
+    await runtime.gateway.close();
+  });
+
+  test("loads codex execution policy overrides from user settings", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "flint-gateway-codex-settings-"));
+    const userPath = join(dir, "user-settings.json");
+    const storePath = join(dir, "threads.json");
+
+    await Bun.write(
+      userPath,
+      JSON.stringify({
+        gateway: {
+          codex: {
+            approvalPolicy: "never",
+            sandboxMode: "danger-full-access",
+          },
+        },
+      }),
+    );
+
+    const runtime = await createGatewayRuntime({
+      FLINT_GATEWAY_USER_SETTINGS_PATH: userPath,
+      FLINT_GATEWAY_STORE_PATH: storePath,
+    });
+
+    expect(runtime.codexExecution).toEqual({
+      approvalPolicy: "never",
+      sandboxMode: "danger-full-access",
+    });
+    await runtime.gateway.close();
+  });
+
+  test("defers invalid codex execution policy errors until codex is used", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "flint-gateway-codex-settings-invalid-"));
+    const userPath = join(dir, "user-settings.json");
+    const storePath = join(dir, "threads.json");
+
+    await Bun.write(
+      userPath,
+      JSON.stringify({
+        gateway: {
+          codex: {
+            approvalPolicy: "ask-first",
+          },
+        },
+      }),
+    );
+
+    const runtime = await createGatewayRuntime({
+      FLINT_GATEWAY_USER_SETTINGS_PATH: userPath,
+      FLINT_GATEWAY_STORE_PATH: storePath,
+    });
+    expect(runtime.codexExecution).toEqual({
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    });
+    expect(runtime.codexExecutionError).toContain(
+      "settings.gateway.codex.approvalPolicy must be one of: untrusted, on-failure, on-request, never",
+    );
+
+    await expect(
+      runtime.gateway.handleMessage({
+        channel: "tui",
+        userId: "u1",
+        text: "hello",
+        provider: "codex",
+      }),
+    ).rejects.toThrow(
+      "settings.gateway.codex.approvalPolicy must be one of: untrusted, on-failure, on-request, never",
+    );
+    await runtime.gateway.close();
+  });
+
   test("loads session lifecycle settings from user settings", async () => {
     const dir = await mkdtemp(join(tmpdir(), "flint-gateway-session-settings-"));
     const userPath = join(dir, "user-settings.json");

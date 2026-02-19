@@ -5,6 +5,12 @@ export {
   type PromptOptions,
   type ResumeThreadOptions,
 } from "./app-server-client";
+export {
+  CODEX_APPROVAL_POLICIES,
+  CODEX_SANDBOX_MODES,
+  type CodexApprovalPolicy,
+  type CodexSandboxMode,
+} from "./codex-execution";
 export type { AgentClient, AgentEvent } from "./types";
 export { createClient, type CreateClientOptions } from "./create-client";
 export { registerProvider, type Provider, type ProviderConfig } from "./providers";

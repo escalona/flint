@@ -7,6 +7,8 @@
  */
 
 import type { AgentEvent } from "./types";
+import type { CodexApprovalPolicy, CodexSandboxMode } from "./codex-execution";
+export type { CodexApprovalPolicy, CodexSandboxMode } from "./codex-execution";
 
 interface JsonRpcRequest {
   id: number;
@@ -49,6 +51,10 @@ export interface CreateThreadOptions {
   systemPromptAppend?: string;
   /** Optional MCP server config (provider-specific) */
   mcpServers?: Record<string, unknown>;
+  /** Codex-only: default approval policy for the thread */
+  approvalPolicy?: CodexApprovalPolicy;
+  /** Codex-only: default sandbox mode for the thread */
+  sandboxMode?: CodexSandboxMode;
 }
 
 export interface PromptOptions {
@@ -67,6 +73,10 @@ export interface ResumeThreadOptions {
   systemPromptAppend?: string;
   /** Optional MCP server config (provider-specific) */
   mcpServers?: Record<string, unknown>;
+  /** Codex-only: default approval policy for the thread */
+  approvalPolicy?: CodexApprovalPolicy;
+  /** Codex-only: default sandbox mode for the thread */
+  sandboxMode?: CodexSandboxMode;
 }
 
 export class AppServerClient {
@@ -256,6 +266,7 @@ export class AppServerClient {
     };
     this.applyInstructionParams(params, options?.systemPrompt, options?.systemPromptAppend);
     this.applyMcpParams(params, options?.mcpServers);
+    this.applyCodexExecutionParams(params, options?.approvalPolicy, options?.sandboxMode);
     return params;
   }
 
@@ -270,6 +281,7 @@ export class AppServerClient {
     };
     this.applyInstructionParams(params, options?.systemPrompt, options?.systemPromptAppend);
     this.applyMcpParams(params, options?.mcpServers);
+    this.applyCodexExecutionParams(params, options?.approvalPolicy, options?.sandboxMode);
     return params;
   }
 
@@ -305,6 +317,22 @@ export class AppServerClient {
       params.config = normalizeMcpServersForCodexConfigOverrides(mcpServers);
     } else {
       params.mcpServers = mcpServers;
+    }
+  }
+
+  private applyCodexExecutionParams(
+    params: Record<string, unknown>,
+    approvalPolicy: CodexApprovalPolicy | undefined,
+    sandboxMode: CodexSandboxMode | undefined,
+  ): void {
+    if (this.provider !== "codex") {
+      return;
+    }
+    if (approvalPolicy) {
+      params.approvalPolicy = approvalPolicy;
+    }
+    if (sandboxMode) {
+      params.sandbox = sandboxMode;
     }
   }
 

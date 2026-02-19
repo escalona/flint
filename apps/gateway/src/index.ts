@@ -1,5 +1,13 @@
 import { SlackAdapter, createWebhookHandler } from "@flint-dev/channels";
-import { createClient, type AgentEvent, type AppServerClient } from "@flint-dev/sdk";
+import {
+  CODEX_APPROVAL_POLICIES,
+  CODEX_SANDBOX_MODES,
+  createClient,
+  type AgentEvent,
+  type AppServerClient,
+  type CodexApprovalPolicy,
+  type CodexSandboxMode,
+} from "@flint-dev/sdk";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -23,6 +31,13 @@ import { composeSystemPromptAppend } from "./system-context.ts";
 
 export type RoutingMode = "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
 export type ChatType = "direct" | "group" | "channel";
+export type { CodexApprovalPolicy, CodexSandboxMode };
+
+export interface CodexExecutionConfig {
+  approvalPolicy: CodexApprovalPolicy;
+  sandboxMode: CodexSandboxMode;
+}
+
 const USER_SETTINGS_PATH_ENV = "FLINT_GATEWAY_USER_SETTINGS_PATH";
 const ENV_VAR_REF_REGEX = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
 const ESCAPED_ENV_VAR_REF_REGEX = /\$\$\{([A-Z_][A-Z0-9_]*)\}/g;
@@ -30,6 +45,12 @@ const ESCAPED_ENV_VAR_SENTINEL = "__FLINT_ESCAPED_ENV_VAR__";
 const MEMORY_MCP_DEFAULT_ALIAS = "flint_memory";
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 120;
 const BUILTIN_PROVIDER_HINTS = ["claude", "pi", "codex"];
+const DEFAULT_CODEX_EXECUTION: Readonly<CodexExecutionConfig> = Object.freeze({
+  approvalPolicy: "on-request",
+  sandboxMode: "workspace-write",
+});
+const CODEX_APPROVAL_POLICY_SET = new Set<string>(CODEX_APPROVAL_POLICIES);
+const CODEX_SANDBOX_MODE_SET = new Set<string>(CODEX_SANDBOX_MODES);
 
 interface McpProfileDefinition {
   profiles?: string[];
@@ -41,6 +62,7 @@ interface GatewaySettings {
     mcpProfiles?: Record<string, McpProfileDefinition>;
     defaultMcpProfileIds?: string[];
     session?: unknown;
+    codex?: unknown;
   };
 }
 
@@ -105,6 +127,8 @@ export interface GatewayOptions {
   defaultMcpProfileIds: string[];
   memoryMcpServer?: GatewayMemoryMcpServer;
   sessionLifecycle: ResolvedSessionLifecycleConfig;
+  codexExecution?: CodexExecutionConfig;
+  codexExecutionError?: string;
 }
 
 export interface GatewayReply {
@@ -289,9 +313,15 @@ export class FlintGateway {
   private readonly store: ThreadStore;
   private readonly queue = new PerKeyQueue();
   private readonly runtimes = new Map<string, ThreadRuntime>();
+  private readonly codexExecution: CodexExecutionConfig;
+  private readonly codexExecutionError: string | undefined;
 
   constructor(private readonly options: GatewayOptions) {
     this.store = new ThreadStore(options.storePath);
+    this.codexExecution = options.codexExecution
+      ? { ...options.codexExecution }
+      : copyDefaultCodexExecution();
+    this.codexExecutionError = options.codexExecutionError;
   }
 
   async start(): Promise<void> {
@@ -460,6 +490,9 @@ export class FlintGateway {
       requestedProvider ||
       normalizeToken(this.options.defaultProvider) ||
       "claude";
+    if (provider === "codex" && this.codexExecutionError) {
+      throw new Error(this.codexExecutionError);
+    }
     const requestedModel = options?.forceDefaultModel
       ? this.options.model
       : options?.modelOverride?.trim() || record?.model || this.options.model;
@@ -493,6 +526,13 @@ export class FlintGateway {
       profileMcpServers,
       this.options.memoryMcpServer,
     );
+    const codexThreadOptions =
+      provider === "codex"
+        ? {
+            approvalPolicy: this.codexExecution.approvalPolicy,
+            sandboxMode: this.codexExecution.sandboxMode,
+          }
+        : undefined;
 
     const client = createClient({
       provider,
@@ -508,6 +548,7 @@ export class FlintGateway {
         providerThreadId = await client.resumeThread(record.providerThreadId, {
           cwd: this.options.cwd,
           ...(requestedModel && { model: requestedModel }),
+          ...(codexThreadOptions ?? {}),
           ...(systemPromptAppend && { systemPromptAppend }),
           ...(requestedMcpServers && { mcpServers: requestedMcpServers }),
         });
@@ -517,6 +558,7 @@ export class FlintGateway {
         );
         providerThreadId = await client.createThread({
           ...(requestedModel && { model: requestedModel }),
+          ...(codexThreadOptions ?? {}),
           ...(systemPromptAppend && { systemPromptAppend }),
           ...(requestedMcpServers && { mcpServers: requestedMcpServers }),
         });
@@ -524,6 +566,7 @@ export class FlintGateway {
     } else {
       providerThreadId = await client.createThread({
         ...(requestedModel && { model: requestedModel }),
+        ...(codexThreadOptions ?? {}),
         ...(systemPromptAppend && { systemPromptAppend }),
         ...(requestedMcpServers && { mcpServers: requestedMcpServers }),
       });
@@ -1125,6 +1168,74 @@ function parseDefaultMcpProfileIdsFromSettings(
   return normalized;
 }
 
+interface ParsedCodexExecutionConfig {
+  config: CodexExecutionConfig;
+  invalidConfigError?: string;
+}
+
+function copyDefaultCodexExecution(): CodexExecutionConfig {
+  return {
+    approvalPolicy: DEFAULT_CODEX_EXECUTION.approvalPolicy,
+    sandboxMode: DEFAULT_CODEX_EXECUTION.sandboxMode,
+  };
+}
+
+function parseCodexExecutionFromSettings(settings: GatewaySettings): ParsedCodexExecutionConfig {
+  const rawCodex = settings.gateway?.codex;
+  if (rawCodex === undefined) {
+    return { config: copyDefaultCodexExecution() };
+  }
+  if (!isPlainObject(rawCodex)) {
+    return {
+      config: copyDefaultCodexExecution(),
+      invalidConfigError: "[gateway] settings.gateway.codex must be an object",
+    };
+  }
+
+  const rawApprovalPolicy = rawCodex.approvalPolicy;
+  const approvalPolicy = parseCodexApprovalPolicy(rawApprovalPolicy);
+  if (rawApprovalPolicy !== undefined && !approvalPolicy) {
+    return {
+      config: copyDefaultCodexExecution(),
+      invalidConfigError: `[gateway] settings.gateway.codex.approvalPolicy must be one of: ${CODEX_APPROVAL_POLICIES.join(", ")}`,
+    };
+  }
+
+  const rawSandboxMode = rawCodex.sandboxMode;
+  const sandboxMode = parseCodexSandboxMode(rawSandboxMode);
+  if (rawSandboxMode !== undefined && !sandboxMode) {
+    return {
+      config: copyDefaultCodexExecution(),
+      invalidConfigError: `[gateway] settings.gateway.codex.sandboxMode must be one of: ${CODEX_SANDBOX_MODES.join(", ")}`,
+    };
+  }
+
+  return {
+    config: {
+      approvalPolicy: approvalPolicy ?? DEFAULT_CODEX_EXECUTION.approvalPolicy,
+      sandboxMode: sandboxMode ?? DEFAULT_CODEX_EXECUTION.sandboxMode,
+    },
+  };
+}
+
+function parseCodexApprovalPolicy(value: unknown): CodexApprovalPolicy | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  return CODEX_APPROVAL_POLICY_SET.has(normalized)
+    ? (normalized as CodexApprovalPolicy)
+    : undefined;
+}
+
+function parseCodexSandboxMode(value: unknown): CodexSandboxMode | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  return CODEX_SANDBOX_MODE_SET.has(normalized) ? (normalized as CodexSandboxMode) : undefined;
+}
+
 function resolveMcpServersFromProfiles(
   profileIds: string[],
   profiles: Record<string, McpProfileDefinition>,
@@ -1486,6 +1597,8 @@ export interface GatewayRuntime {
   mcpProfileCount: number;
   memoryEnabled: boolean;
   sessionLifecycle: ResolvedSessionLifecycleConfig;
+  codexExecution: CodexExecutionConfig;
+  codexExecutionError?: string;
 }
 
 export async function createGatewayRuntime(
@@ -1512,6 +1625,13 @@ export async function createGatewayRuntime(
   const mcpProfiles = parseMcpProfilesFromSettings(settings, env);
   const defaultMcpProfileIds = parseDefaultMcpProfileIdsFromSettings(settings, mcpProfiles);
   const sessionLifecycle = resolveSessionLifecycleConfig(settings.gateway?.session);
+  const { config: codexExecution, invalidConfigError: codexExecutionError } =
+    parseCodexExecutionFromSettings(settings);
+  if (codexExecutionError) {
+    console.warn(
+      `${codexExecutionError}; ignoring codex config until provider "codex" is used`,
+    );
+  }
   const memoryWorkspaceDir = resolve(cwd);
   const memoryMcpServer = memoryEnabled ? createMemoryMcpServer(memoryWorkspaceDir) : undefined;
 
@@ -1526,6 +1646,8 @@ export async function createGatewayRuntime(
     defaultMcpProfileIds,
     memoryMcpServer,
     sessionLifecycle,
+    codexExecution,
+    codexExecutionError,
   });
   await gateway.start();
 
@@ -1559,6 +1681,8 @@ export async function createGatewayRuntime(
     mcpProfileCount: Object.keys(mcpProfiles).length,
     memoryEnabled,
     sessionLifecycle,
+    codexExecution,
+    codexExecutionError,
   };
 }
 
@@ -1630,6 +1754,11 @@ export async function startGatewayServer(
   console.log(`[gateway] idle timeout sec: ${runtime.idleTimeoutSeconds}`);
   console.log(`[gateway] mcp profiles: ${runtime.mcpProfileCount}`);
   console.log(`[gateway] memory: ${runtime.memoryEnabled ? "enabled" : "disabled"}`);
+  console.log(`[gateway] codex approval: ${runtime.codexExecution.approvalPolicy}`);
+  console.log(`[gateway] codex sandbox: ${runtime.codexExecution.sandboxMode}`);
+  if (runtime.codexExecutionError) {
+    console.warn(`${runtime.codexExecutionError}; codex requests will fail until this is fixed`);
+  }
   const defaultPolicy = runtime.sessionLifecycle.defaultPolicy;
   const resetParts: string[] = [];
   if (defaultPolicy.dailyAtHour !== undefined) {

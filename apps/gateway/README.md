@@ -11,6 +11,7 @@ HTTP gateway prototype for routing normalized channel messages into Flint app se
 - Uses `@flint-dev/sdk` providers (`claude`, `pi`, `codex`, or registered custom providers)
 - Supports idempotency keys with in-flight dedupe and replay cache
 - Applies session lifecycle policies (daily reset, optional idle reset, per-type/per-channel overrides)
+- Applies configurable Codex execution defaults (approval policy + sandbox mode)
 - Supports in-band reset triggers (`/new`, `/reset`, plus configured extras)
 - Appends memory recall guidance and `MEMORY.md`/`memory.md` contents to provider system/developer instructions
 - Exposes model-callable memory MCP tools (`memory_search`, `memory_get`)
@@ -141,6 +142,10 @@ Gateway does not run a memory-flush turn on `/new` or `/reset`.
       },
       "resetTriggers": ["/new", "/reset"],
       "greetingPrompt": "This session was reset. Greet briefly and ask what to work on next."
+    },
+    "codex": {
+      "approvalPolicy": "on-request",
+      "sandboxMode": "workspace-write"
     }
   }
 }
@@ -152,6 +157,15 @@ Session lifecycle defaults:
 - If only `gateway.session.idleMinutes` is set (without `reset`/`resetByType`/`resetByChannel`), gateway uses legacy idle-only mode.
 - When both daily and idle are configured, whichever expires first forces a fresh provider session.
 - Channel overrides (`resetByChannel`) take precedence over type overrides (`resetByType`) and base `reset`.
+
+Codex execution defaults:
+
+- Applies only when provider is `codex`.
+- Default `approvalPolicy` is `on-request`.
+- Default `sandboxMode` is `workspace-write`.
+- Override in `settings.gateway.codex` with:
+  - `approvalPolicy`: `untrusted` | `on-failure` | `on-request` | `never`
+  - `sandboxMode`: `read-only` | `workspace-write` | `danger-full-access`
 
 Config loading:
 
