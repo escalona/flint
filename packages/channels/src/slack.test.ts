@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { GatewayReply, InboundMessage } from "./contracts.ts";
-import { SlackAdapter } from "./slack.ts";
+import { SlackAdapter, splitMessage } from "./slack.ts";
 import { createWebhookHandler, type MessageGateway } from "./handler.ts";
 
 const SIGNING_SECRET = "test-signing-secret";
@@ -262,6 +262,32 @@ describe("SlackAdapter.parseWebhook", () => {
     });
     const result = adapter.parseWebhook(body, new Headers());
     expect(result.type).toBe("ignore");
+  });
+});
+
+describe("splitMessage", () => {
+  test("returns single chunk when under limit", () => {
+    expect(splitMessage("short", 100)).toEqual(["short"]);
+  });
+
+  test("returns single chunk when exactly at limit", () => {
+    const text = "a".repeat(100);
+    expect(splitMessage(text, 100)).toEqual([text]);
+  });
+
+  test("splits at last newline within limit", () => {
+    const text = "aaa\nbbb\nccc";
+    const chunks = splitMessage(text, 5);
+    expect(chunks).toEqual(["aaa", "bbb", "ccc"]);
+  });
+
+  test("hard-breaks when no newline exists", () => {
+    const text = "a".repeat(30);
+    expect(splitMessage(text, 10)).toEqual(["a".repeat(10), "a".repeat(10), "a".repeat(10)]);
+  });
+
+  test("handles empty string", () => {
+    expect(splitMessage("", 10)).toEqual([""]);
   });
 });
 

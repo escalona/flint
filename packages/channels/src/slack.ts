@@ -55,6 +55,9 @@ function toolLabel(name: string): string {
   return `Running ${name}`;
 }
 
+/** Slack's message text limit is 40,000 characters; we leave a small buffer. */
+const SLACK_MAX_TEXT_LENGTH = 39_000;
+
 /** Minimum interval between status message updates to avoid rate limits. */
 const STATUS_UPDATE_INTERVAL_MS = 2_000;
 
@@ -229,29 +232,29 @@ export class SlackAdapter implements ChannelAdapter {
     const threadTs = meta["threadTs"] as string;
     const status = this.statusMessages.get(meta.eventId);
     const formatted = markdownToMrkdwn(reply);
+    const chunks = splitMessage(formatted, SLACK_MAX_TEXT_LENGTH);
 
     if (status) {
-      // Replace the status message with the final reply
+      this.statusMessages.delete(meta.eventId);
       try {
         await this.slackApi("chat.update", {
           channel: channelId,
           ts: status.ts,
-          text: formatted,
+          text: chunks[0],
         });
-        this.statusMessages.delete(meta.eventId);
-        return;
+        chunks.shift();
       } catch (error) {
         console.warn("[channels/slack] status→reply update failed, posting new message:", error);
-        this.statusMessages.delete(meta.eventId);
       }
     }
 
-    // Fallback: post a new message
-    await this.slackApi("chat.postMessage", {
-      channel: channelId,
-      text: formatted,
-      ...(threadTs ? { thread_ts: threadTs } : {}),
-    });
+    for (const chunk of chunks) {
+      await this.slackApi("chat.postMessage", {
+        channel: channelId,
+        text: chunk,
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+      });
+    }
   }
 
   private async slackApi(method: string, body: Record<string, unknown>): Promise<unknown> {
@@ -269,6 +272,36 @@ export class SlackAdapter implements ChannelAdapter {
     }
     return data;
   }
+}
+
+/**
+ * Split a message into chunks that fit within Slack's character limit.
+ * Tries to break at newline boundaries to avoid splitting mid-line.
+ */
+export function splitMessage(text: string, maxLength: number): string[] {
+  if (text.length <= maxLength) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLength) {
+      chunks.push(remaining);
+      break;
+    }
+
+    // Find the last newline within the limit to break cleanly
+    let splitAt = remaining.lastIndexOf("\n", maxLength);
+    if (splitAt <= 0) {
+      // No newline found; hard-break at the limit
+      splitAt = maxLength;
+    }
+
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).replace(/^\n/, "");
+  }
+
+  return chunks;
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
