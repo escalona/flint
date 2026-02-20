@@ -1,6 +1,7 @@
 export {
   AppServerClient,
   type AppServerClientOptions,
+  type ApprovalResponseDecision,
   type CreateThreadOptions,
   type PromptOptions,
   type ResumeThreadOptions,

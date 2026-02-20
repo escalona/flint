@@ -204,14 +204,17 @@ describe("MCP settings", () => {
       FLINT_GATEWAY_STORE_PATH: storePath,
     });
     expect(defaultRuntime.idleTimeoutSeconds).toBe(120);
+    expect(defaultRuntime.approvalResponseDecision).toBe("accept");
     await defaultRuntime.gateway.close();
 
     const configuredRuntime = await createGatewayRuntime({
       FLINT_GATEWAY_CWD: dir,
       FLINT_GATEWAY_STORE_PATH: storePath,
       FLINT_GATEWAY_IDLE_TIMEOUT_SECONDS: "240",
+      FLINT_GATEWAY_APPROVAL_RESPONSE: "decline",
     });
     expect(configuredRuntime.idleTimeoutSeconds).toBe(240);
+    expect(configuredRuntime.approvalResponseDecision).toBe("decline");
     await configuredRuntime.gateway.close();
   });
 
@@ -394,6 +397,7 @@ describe("FlintGateway session fallback behavior", () => {
       mcpProfiles: {},
       defaultMcpProfileIds: [],
       sessionLifecycle: resolveSessionLifecycleConfig(undefined),
+      turnTimeoutSeconds: 300,
     });
     await gateway.start();
 
@@ -487,6 +491,7 @@ describe("FlintGateway session fallback behavior", () => {
       mcpProfiles: {},
       defaultMcpProfileIds: [],
       sessionLifecycle: resolveSessionLifecycleConfig(undefined),
+      turnTimeoutSeconds: 300,
     });
     await gateway.start();
 

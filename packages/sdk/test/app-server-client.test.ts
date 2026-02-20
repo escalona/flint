@@ -149,3 +149,82 @@ describe("AppServerClient thread parameter mapping", () => {
     });
   });
 });
+
+describe("AppServerClient approval request handling", () => {
+  test("treats id+method messages as server requests and applies configured decision", () => {
+    const client = new AppServerClient({
+      command: "does-not-run-in-tests",
+      cwd: process.cwd(),
+      approvalResponseDecision: "decline",
+    });
+    const writes: string[] = [];
+    const internals = client as unknown as {
+      stdin: { write: (line: string) => void };
+      pendingRequests: Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>;
+      handleMessage: (line: string) => void;
+    };
+    internals.stdin = { write: (line: string) => writes.push(line) };
+    internals.pendingRequests.set(42, {
+      resolve: () => {},
+      reject: () => {},
+    });
+
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      internals.handleMessage(
+        JSON.stringify({
+          id: 42,
+          method: "item/commandExecution/requestApproval",
+          params: { itemId: "cmd-1", command: "bun install" },
+        }),
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(internals.pendingRequests.has(42)).toBe(true);
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(writes[0]!)).toEqual({
+      id: 42,
+      result: { decision: "decline" },
+    });
+  });
+
+  test("maps forwarded approval notifications to activity heartbeat events", () => {
+    const client = new AppServerClient({
+      command: "does-not-run-in-tests",
+      cwd: process.cwd(),
+    });
+    const writes: string[] = [];
+    const notifications: Array<{ method: string; params?: unknown }> = [];
+    const internals = client as unknown as {
+      stdin: { write: (line: string) => void };
+      notificationListeners: Array<(notification: { method: string; params?: unknown }) => void>;
+      handleMessage: (line: string) => void;
+      translateNotification: (notification: { method: string; params?: unknown }) => Array<{
+        type: string;
+      }>;
+    };
+    internals.stdin = { write: (line: string) => writes.push(line) };
+    internals.notificationListeners.push((notification) => notifications.push(notification));
+
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      internals.handleMessage(
+        JSON.stringify({
+          id: 7,
+          method: "item/fileChange/requestApproval",
+          params: { itemId: "edit-1", reason: "apply patch" },
+        }),
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(writes).toHaveLength(1);
+    expect(notifications).toHaveLength(1);
+    expect(internals.translateNotification(notifications[0]!)).toEqual([{ type: "activity" }]);
+  });
+});

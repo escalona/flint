@@ -5,6 +5,7 @@ import type { AppServerClientOptions } from "./app-server-client";
 export interface ProviderConfig {
   cwd: string;
   env?: Record<string, string>;
+  approvalResponseDecision?: AppServerClientOptions["approvalResponseDecision"];
 }
 
 export interface Provider {

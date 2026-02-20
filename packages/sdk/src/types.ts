@@ -1,5 +1,6 @@
 export type AgentEvent =
   | { type: "init"; sessionId: string }
+  | { type: "activity" }
   | { type: "text"; delta: string }
   | { type: "reasoning"; delta: string }
   | { type: "tool_start"; id: string; name: string; input?: unknown; parentId?: string | null }

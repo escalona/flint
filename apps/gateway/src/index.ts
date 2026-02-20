@@ -4,6 +4,7 @@ import {
   CODEX_SANDBOX_MODES,
   createClient,
   type AgentEvent,
+  type ApprovalResponseDecision,
   type AppServerClient,
   type CodexApprovalPolicy,
   type CodexSandboxMode,
@@ -44,6 +45,8 @@ const ESCAPED_ENV_VAR_REF_REGEX = /\$\$\{([A-Z_][A-Z0-9_]*)\}/g;
 const ESCAPED_ENV_VAR_SENTINEL = "__FLINT_ESCAPED_ENV_VAR__";
 const MEMORY_MCP_DEFAULT_ALIAS = "flint_memory";
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 120;
+const DEFAULT_TURN_TIMEOUT_SECONDS = 300;
+const DEFAULT_APPROVAL_RESPONSE_DECISION: ApprovalResponseDecision = "accept";
 const BUILTIN_PROVIDER_HINTS = ["claude", "pi", "codex"];
 const DEFAULT_CODEX_EXECUTION: Readonly<CodexExecutionConfig> = Object.freeze({
   approvalPolicy: "on-request",
@@ -127,6 +130,8 @@ export interface GatewayOptions {
   defaultMcpProfileIds: string[];
   memoryMcpServer?: GatewayMemoryMcpServer;
   sessionLifecycle: ResolvedSessionLifecycleConfig;
+  turnTimeoutSeconds: number;
+  approvalResponseDecision?: ApprovalResponseDecision;
   codexExecution?: CodexExecutionConfig;
   codexExecutionError?: string;
 }
@@ -315,6 +320,7 @@ export class FlintGateway {
   private readonly runtimes = new Map<string, ThreadRuntime>();
   private readonly codexExecution: CodexExecutionConfig;
   private readonly codexExecutionError: string | undefined;
+  private readonly approvalResponseDecision: ApprovalResponseDecision;
 
   constructor(private readonly options: GatewayOptions) {
     this.store = new ThreadStore(options.storePath);
@@ -322,6 +328,8 @@ export class FlintGateway {
       ? { ...options.codexExecution }
       : copyDefaultCodexExecution();
     this.codexExecutionError = options.codexExecutionError;
+    this.approvalResponseDecision =
+      options.approvalResponseDecision ?? DEFAULT_APPROVAL_RESPONSE_DECISION;
   }
 
   async start(): Promise<void> {
@@ -538,6 +546,7 @@ export class FlintGateway {
       provider,
       cwd: this.options.cwd,
       env: process.env as Record<string, string>,
+      approvalResponseDecision: this.approvalResponseDecision,
     });
     await client.start();
     const systemPromptAppend = await this.resolveSystemPromptAppend();
@@ -624,14 +633,14 @@ export class FlintGateway {
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
-    // Interrupt the agent if no events arrive for 2 minutes (matches Claude Code CLI default).
+    const timeoutMs = this.options.turnTimeoutSeconds * 1_000;
     const resetTimer = () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(async () => {
         timedOut = true;
-        console.warn("[gateway] turn inactive for 120s, interrupting agent");
+        console.warn(`[gateway] turn inactive for ${this.options.turnTimeoutSeconds}s, interrupting agent`);
         await client.interrupt();
-      }, 120_000);
+      }, timeoutMs);
     };
 
     resetTimer();
@@ -640,6 +649,8 @@ export class FlintGateway {
         resetTimer();
         if (onEvent) await onEvent(event);
         switch (event.type) {
+          case "activity":
+            break;
           case "text":
             responseText += event.delta;
             break;
@@ -656,7 +667,11 @@ export class FlintGateway {
     }
 
     if (timedOut) {
-      throw new Error("Turn interrupted: no agent activity for 120s.");
+      const partial = responseText.trim();
+      if (partial) {
+        return partial + `\n\n_(Turn interrupted: no agent activity for ${this.options.turnTimeoutSeconds}s.)_`;
+      }
+      return `(Turn interrupted: no agent activity for ${this.options.turnTimeoutSeconds}s.)`;
     }
 
     if (terminalError) {
@@ -1320,6 +1335,22 @@ function readGatewayIdleTimeoutSeconds(value: string | undefined): number {
   return Math.max(5, Math.floor(parsed));
 }
 
+function readTurnTimeoutSeconds(value: string | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_TURN_TIMEOUT_SECONDS;
+  }
+  return Math.max(30, Math.floor(parsed));
+}
+
+function readApprovalResponseDecision(value: string | undefined): ApprovalResponseDecision {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "decline") {
+    return "decline";
+  }
+  return DEFAULT_APPROVAL_RESPONSE_DECISION;
+}
+
 function readBooleanEnv(value: string | undefined, fallback: boolean): boolean {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) {
@@ -1597,6 +1628,7 @@ export interface GatewayRuntime {
   mcpProfileCount: number;
   memoryEnabled: boolean;
   sessionLifecycle: ResolvedSessionLifecycleConfig;
+  approvalResponseDecision: ApprovalResponseDecision;
   codexExecution: CodexExecutionConfig;
   codexExecutionError?: string;
 }
@@ -1619,6 +1651,12 @@ export async function createGatewayRuntime(
   );
   const idleTimeoutSeconds = readGatewayIdleTimeoutSeconds(
     env["FLINT_GATEWAY_IDLE_TIMEOUT_SECONDS"],
+  );
+  const turnTimeoutSeconds = readTurnTimeoutSeconds(
+    env["FLINT_GATEWAY_TURN_TIMEOUT_SECONDS"],
+  );
+  const approvalResponseDecision = readApprovalResponseDecision(
+    env["FLINT_GATEWAY_APPROVAL_RESPONSE"],
   );
   const memoryEnabled = readBooleanEnv(env["FLINT_GATEWAY_MEMORY_ENABLED"], true);
   const settings = await readGatewaySettings(env);
@@ -1646,6 +1684,8 @@ export async function createGatewayRuntime(
     defaultMcpProfileIds,
     memoryMcpServer,
     sessionLifecycle,
+    turnTimeoutSeconds,
+    approvalResponseDecision,
     codexExecution,
     codexExecutionError,
   });
@@ -1681,6 +1721,7 @@ export async function createGatewayRuntime(
     mcpProfileCount: Object.keys(mcpProfiles).length,
     memoryEnabled,
     sessionLifecycle,
+    approvalResponseDecision,
     codexExecution,
     codexExecutionError,
   };
@@ -1756,6 +1797,7 @@ export async function startGatewayServer(
   console.log(`[gateway] memory: ${runtime.memoryEnabled ? "enabled" : "disabled"}`);
   console.log(`[gateway] codex approval: ${runtime.codexExecution.approvalPolicy}`);
   console.log(`[gateway] codex sandbox: ${runtime.codexExecution.sandboxMode}`);
+  console.log(`[gateway] approval response: ${runtime.approvalResponseDecision}`);
   if (runtime.codexExecutionError) {
     console.warn(`${runtime.codexExecutionError}; codex requests will fail until this is fixed`);
   }
@@ -1824,6 +1866,8 @@ function printHelp(): void {
   );
   console.log("  FLINT_GATEWAY_IDEMPOTENCY_TTL_MS   Idempotency cache TTL in ms (default: 300000)");
   console.log("  FLINT_GATEWAY_IDLE_TIMEOUT_SECONDS HTTP idle timeout in seconds (default: 120)");
+  console.log("  FLINT_GATEWAY_TURN_TIMEOUT_SECONDS Agent turn inactivity timeout in seconds (default: 300)");
+  console.log("  FLINT_GATEWAY_APPROVAL_RESPONSE    Approval response policy: accept|decline (default: accept)");
   console.log(
     "  FLINT_GATEWAY_MEMORY_ENABLED       Enable memory tools and memory recall guidance (default: true)",
   );

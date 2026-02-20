@@ -8,10 +8,11 @@ export function createClient(options: CreateClientOptions): AppServerClient {
     return new AppServerClient(options);
   }
 
-  const { provider, ...config } = options;
+  const { provider, approvalResponseDecision, ...config } = options;
   const resolved = getProvider(provider).resolve(config);
   return new AppServerClient({
     ...resolved,
     provider: resolved.provider ?? provider,
+    ...(approvalResponseDecision && { approvalResponseDecision }),
   });
 }

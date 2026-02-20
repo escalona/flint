@@ -28,6 +28,7 @@ interface JsonRpcNotification {
 }
 
 type JsonRpcMessage = JsonRpcResponse | JsonRpcNotification;
+export type ApprovalResponseDecision = "accept" | "decline";
 
 export interface AppServerClientOptions {
   /** Provider name (used for provider-specific request mapping) */
@@ -40,6 +41,8 @@ export interface AppServerClientOptions {
   cwd: string;
   /** Environment variables for the app server process */
   env?: Record<string, string>;
+  /** How to respond to server-side approval requests */
+  approvalResponseDecision?: ApprovalResponseDecision;
 }
 
 export interface CreateThreadOptions {
@@ -102,6 +105,7 @@ export class AppServerClient {
   private readonly cwd: string;
   private readonly env: Record<string, string> | undefined;
   private readonly provider: string;
+  private readonly approvalResponseDecision: ApprovalResponseDecision;
 
   constructor(options: AppServerClientOptions) {
     this.command = options.command;
@@ -109,6 +113,7 @@ export class AppServerClient {
     this.cwd = options.cwd;
     this.env = options.env;
     this.provider = (options.provider ?? "").trim().toLowerCase();
+    this.approvalResponseDecision = options.approvalResponseDecision ?? "accept";
   }
 
   /** Start the app server process and initialize it. */
@@ -458,16 +463,26 @@ export class AppServerClient {
   }
 
   private handleMessage(line: string): void {
-    let msg: JsonRpcMessage;
+    let msg: Record<string, unknown>;
     try {
-      msg = JSON.parse(line) as JsonRpcMessage;
+      msg = JSON.parse(line) as Record<string, unknown>;
     } catch {
       return;
     }
 
-    // Response (has id)
-    if ("id" in msg && msg.id != null) {
-      const response = msg as JsonRpcResponse;
+    const hasId = "id" in msg && msg.id != null;
+    const hasMethod = "method" in msg && typeof msg.method === "string";
+
+    // Server→client request (has both id and method).
+    // e.g. item/commandExecution/requestApproval, item/fileChange/requestApproval
+    if (hasId && hasMethod) {
+      this.handleServerRequest(msg as unknown as JsonRpcRequest);
+      return;
+    }
+
+    // Response to our request (has id, no method)
+    if (hasId) {
+      const response = msg as unknown as JsonRpcResponse;
       const pending = this.pendingRequests.get(response.id);
       if (pending) {
         this.pendingRequests.delete(response.id);
@@ -481,10 +496,61 @@ export class AppServerClient {
     }
 
     // Notification (no id)
-    const notification = msg as JsonRpcNotification;
+    const notification = msg as unknown as JsonRpcNotification;
     for (const listener of this.notificationListeners) {
       listener(notification);
     }
+  }
+
+  /**
+   * Handle a server→client JSON-RPC request (requires a response).
+   * Auto-responds to requestApproval requests since there is no interactive UI.
+   */
+  private handleServerRequest(request: JsonRpcRequest): void {
+    const { method, id } = request;
+
+    if (
+      method === "item/commandExecution/requestApproval" ||
+      method === "item/fileChange/requestApproval"
+    ) {
+      const params = request.params as Record<string, unknown> | undefined;
+      const label =
+        (params?.command as string) ??
+        (params?.reason as string) ??
+        method;
+      const decision = this.approvalResponseDecision;
+      console.warn(`[sdk] auto-${decision === "accept" ? "approving" : "declining"}: ${label}`);
+      this.sendJsonRpcResponse(id, { decision });
+
+      // Forward as a notification so listeners receive an event (resets
+      // the gateway inactivity timer and lets channel adapters show status).
+      for (const listener of this.notificationListeners) {
+        listener({ method, params: request.params as Record<string, unknown> });
+      }
+      return;
+    }
+
+    // Unknown server request — reject gracefully
+    console.warn(`[sdk] unhandled server request: ${method}`);
+    this.sendJsonRpcResponse(id, undefined, {
+      code: -32601,
+      message: `Method not supported: ${method}`,
+    });
+  }
+
+  private sendJsonRpcResponse(
+    id: number,
+    result?: unknown,
+    error?: { code: number; message: string },
+  ): void {
+    if (!this.stdin) return;
+    const response: Record<string, unknown> = { id };
+    if (error) {
+      response.error = error;
+    } else {
+      response.result = result ?? {};
+    }
+    this.stdin.write(JSON.stringify(response) + "\n");
   }
 
   /** Translate app-server JSON-RPC notifications to AgentEvents. */
@@ -602,6 +668,13 @@ export class AppServerClient {
 
       case "error": {
         // Separate error notification — already handled via turn/completed
+        break;
+      }
+
+      // Approval requests are control-plane activity, not tool lifecycle events.
+      case "item/commandExecution/requestApproval":
+      case "item/fileChange/requestApproval": {
+        events.push({ type: "activity" });
         break;
       }
 
